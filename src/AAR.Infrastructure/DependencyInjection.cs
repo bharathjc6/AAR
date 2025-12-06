@@ -54,8 +54,10 @@ public static class DependencyInjection
         // Configure storage options
         services.Configure<FileSystemStorageOptions>(options =>
         {
-            options.BasePath = configuration["Storage:BasePath"] 
-                ?? Path.Combine(Path.GetTempPath(), "aar-storage");
+            var basePath = configuration["Storage:BasePath"];
+            options.BasePath = string.IsNullOrWhiteSpace(basePath)
+                ? Path.Combine(Path.GetTempPath(), "aar-storage")
+                : basePath;
         });
 
         services.Configure<AzureBlobStorageOptions>(options =>

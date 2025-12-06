@@ -107,11 +107,16 @@ public class ApiKey : BaseEntity
     /// </summary>
     private static string GenerateKey()
     {
-        // Format: aar_xxxx_xxxxxxxxxxxxxxxxxxxx
-        var bytes = new byte[24];
+        // Format: aar_xxxxxxxxxxxxxxxxxxxxxxxxxxxx (total 36 chars)
+        var bytes = new byte[32]; // Use more bytes to ensure enough characters after cleanup
         using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
         rng.GetBytes(bytes);
-        return $"aar_{Convert.ToBase64String(bytes).Replace("+", "").Replace("/", "").Replace("=", "")[..32]}";
+        var base64 = Convert.ToBase64String(bytes)
+            .Replace("+", "")
+            .Replace("/", "")
+            .Replace("=", "");
+        // Take first 32 alphanumeric chars (base64 without special chars gives ~42 chars from 32 bytes)
+        return $"aar_{base64[..32]}";
     }
 
     /// <summary>
