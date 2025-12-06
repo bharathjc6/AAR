@@ -1,27 +1,76 @@
+# =============================================================================
+# AAR Worker - Production Dockerfile with Security Hardening
+# =============================================================================
+
 # Build stage for Worker
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
+# Copy project files for restore (layer caching)
 COPY AAR.sln ./
+COPY Directory.Build.props ./
+COPY Directory.Build.targets ./
 COPY src/AAR.Shared/AAR.Shared.csproj src/AAR.Shared/
 COPY src/AAR.Domain/AAR.Domain.csproj src/AAR.Domain/
 COPY src/AAR.Application/AAR.Application.csproj src/AAR.Application/
 COPY src/AAR.Infrastructure/AAR.Infrastructure.csproj src/AAR.Infrastructure/
 COPY src/AAR.Worker/AAR.Worker.csproj src/AAR.Worker/
 
+# Restore dependencies
 RUN dotnet restore src/AAR.Worker/AAR.Worker.csproj
 
+# Copy source, prompts, and build
 COPY . .
-RUN dotnet publish src/AAR.Worker/AAR.Worker.csproj -c Release -o /app/publish
+RUN dotnet publish src/AAR.Worker/AAR.Worker.csproj -c Release -o /app/publish --no-restore
 
-# Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# =============================================================================
+# Runtime stage - Security hardened
+# =============================================================================
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-RUN adduser --disabled-password --gecos '' appuser
-COPY --from=build /app/publish .
-RUN mkdir -p /app/storage /app/logs && chown -R appuser:appuser /app
+# Install git for repository cloning (required for worker)
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 
+# Security: Create non-root user with minimal permissions
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --shell /bin/false --create-home appuser
+
+# Security: Create required directories with restricted permissions
+RUN mkdir -p /app/storage /app/logs /app/temp /app/repos \
+    && chown -R appuser:appgroup /app \
+    && chmod 750 /app/storage /app/logs /app/temp /app/repos
+
+# Copy published application and prompts
+COPY --from=build --chown=appuser:appgroup /app/publish .
+COPY --from=build --chown=appuser:appgroup /src/prompts /app/prompts
+
+# Security: Set restrictive file permissions
+RUN chmod -R 550 /app/*.dll 2>/dev/null || true \
+    && chmod -R 440 /app/prompts/*.txt 2>/dev/null || true
+
+# Switch to non-root user
 USER appuser
 
+# Security: Set environment variables for production
+ENV ASPNETCORE_ENVIRONMENT=Production \
+    DOTNET_EnableDiagnostics=0 \
+    DOTNET_RUNNING_IN_CONTAINER=true \
+    COMPlus_EnableDiagnostics=0 \
+    GIT_TERMINAL_PROMPT=0
+
+# Security: Read-only root filesystem friendly entrypoint
 ENTRYPOINT ["dotnet", "AAR.Worker.dll"]
+
+# =============================================================================
+# Security Notes:
+# - Runs as non-root user (appuser:1001)
+# - Git installed for repo cloning (required functionality)
+# - No interactive prompts (GIT_TERMINAL_PROMPT=0)
+# - Diagnostics disabled in production
+# 
+# Run with additional security flags:
+# docker run --read-only --security-opt=no-new-privileges:true \
+#            --cap-drop=ALL aar-worker
+# =============================================================================

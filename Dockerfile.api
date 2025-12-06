@@ -1,31 +1,81 @@
+# =============================================================================
+# AAR API - Production Dockerfile with Security Hardening
+# =============================================================================
+
 # Build stage for API
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
+# Copy project files for restore (layer caching)
 COPY AAR.sln ./
+COPY Directory.Build.props ./
+COPY Directory.Build.targets ./
 COPY src/AAR.Shared/AAR.Shared.csproj src/AAR.Shared/
 COPY src/AAR.Domain/AAR.Domain.csproj src/AAR.Domain/
 COPY src/AAR.Application/AAR.Application.csproj src/AAR.Application/
 COPY src/AAR.Infrastructure/AAR.Infrastructure.csproj src/AAR.Infrastructure/
 COPY src/AAR.Api/AAR.Api.csproj src/AAR.Api/
 
+# Restore dependencies
 RUN dotnet restore src/AAR.Api/AAR.Api.csproj
 
+# Copy source and build
 COPY . .
-RUN dotnet publish src/AAR.Api/AAR.Api.csproj -c Release -o /app/publish
+RUN dotnet publish src/AAR.Api/AAR.Api.csproj -c Release -o /app/publish --no-restore
 
-# Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# =============================================================================
+# Runtime stage - Security hardened
+# =============================================================================
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-RUN adduser --disabled-password --gecos '' appuser
-COPY --from=build /app/publish .
-RUN mkdir -p /app/storage /app/logs && chown -R appuser:appuser /app
+# Security: Create non-root user with minimal permissions
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --shell /bin/false --create-home appuser
 
+# Security: Create required directories with restricted permissions
+RUN mkdir -p /app/storage /app/logs /app/temp \
+    && chown -R appuser:appgroup /app \
+    && chmod 750 /app/storage /app/logs /app/temp
+
+# Copy published application
+COPY --from=build --chown=appuser:appgroup /app/publish .
+
+# Security: Remove shell and unnecessary tools
+RUN rm -rf /bin/sh /bin/bash 2>/dev/null || true
+
+# Security: Set restrictive file permissions
+RUN chmod -R 550 /app/*.dll /app/*.json 2>/dev/null || true
+
+# Switch to non-root user
 USER appuser
+
+# Security: Expose only necessary port
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+# Security: Set environment variables for production
+ENV ASPNETCORE_URLS=http://+:8080 \
+    ASPNETCORE_ENVIRONMENT=Production \
+    DOTNET_EnableDiagnostics=0 \
+    DOTNET_RUNNING_IN_CONTAINER=true \
+    COMPlus_EnableDiagnostics=0
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+# Security: Read-only root filesystem friendly entrypoint
 ENTRYPOINT ["dotnet", "AAR.Api.dll"]
+
+# =============================================================================
+# Security Notes:
+# - Runs as non-root user (appuser:1001)
+# - No shell access for security
+# - Minimal attack surface
+# - Health check uses wget (available in aspnet image)
+# - Diagnostics disabled in production
+# 
+# Run with additional security flags:
+# docker run --read-only --security-opt=no-new-privileges:true \
+#            --cap-drop=ALL -p 8080:8080 aar-api
+# =============================================================================

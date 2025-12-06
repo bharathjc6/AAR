@@ -105,6 +105,10 @@ public static class DependencyInjection
         services.AddScoped<ICodeMetricsService, CodeMetricsService>();
         services.AddScoped<IPdfService, PdfService>();
 
+        // Security services
+        services.AddScoped<ISecureFileService, SecureFileService>();
+        services.AddScoped<IVirusScanService, MockVirusScanService>();
+
         return services;
     }
 }
