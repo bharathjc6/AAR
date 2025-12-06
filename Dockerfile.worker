@@ -1,0 +1,27 @@
+# Build stage for Worker
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+COPY AAR.sln ./
+COPY src/AAR.Shared/AAR.Shared.csproj src/AAR.Shared/
+COPY src/AAR.Domain/AAR.Domain.csproj src/AAR.Domain/
+COPY src/AAR.Application/AAR.Application.csproj src/AAR.Application/
+COPY src/AAR.Infrastructure/AAR.Infrastructure.csproj src/AAR.Infrastructure/
+COPY src/AAR.Worker/AAR.Worker.csproj src/AAR.Worker/
+
+RUN dotnet restore src/AAR.Worker/AAR.Worker.csproj
+
+COPY . .
+RUN dotnet publish src/AAR.Worker/AAR.Worker.csproj -c Release -o /app/publish
+
+# Runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+WORKDIR /app
+
+RUN adduser --disabled-password --gecos '' appuser
+COPY --from=build /app/publish .
+RUN mkdir -p /app/storage /app/logs && chown -R appuser:appuser /app
+
+USER appuser
+
+ENTRYPOINT ["dotnet", "AAR.Worker.dll"]

@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  # AAR API Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: aar-api
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Data Source=/app/data/aar.db
+      - UseSqlServer=false
+      - BlobStorage__Provider=FileSystem
+      - BlobStorage__BasePath=/app/storage
+      - QueueService__Provider=InMemory
+      - Azure__OpenAI__UseMock=true
+    volumes:
+      - aar-data:/app/data
+      - aar-storage:/app/storage
+      - aar-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - aar-network
+    restart: unless-stopped
+
+  # AAR Worker Service
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: aar-worker
+    environment:
+      - DOTNET_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Data Source=/app/data/aar.db
+      - UseSqlServer=false
+      - BlobStorage__Provider=FileSystem
+      - BlobStorage__BasePath=/app/storage
+      - QueueService__Provider=InMemory
+      - Azure__OpenAI__UseMock=true
+    volumes:
+      - aar-data:/app/data
+      - aar-storage:/app/storage
+      - aar-logs:/app/logs
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - aar-network
+    restart: unless-stopped
+
+volumes:
+  aar-data:
+    driver: local
+  aar-storage:
+    driver: local
+  aar-logs:
+    driver: local
+
+networks:
+  aar-network:
+    driver: bridge

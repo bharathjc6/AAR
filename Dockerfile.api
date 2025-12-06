@@ -1,0 +1,31 @@
+# Build stage for API
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+COPY AAR.sln ./
+COPY src/AAR.Shared/AAR.Shared.csproj src/AAR.Shared/
+COPY src/AAR.Domain/AAR.Domain.csproj src/AAR.Domain/
+COPY src/AAR.Application/AAR.Application.csproj src/AAR.Application/
+COPY src/AAR.Infrastructure/AAR.Infrastructure.csproj src/AAR.Infrastructure/
+COPY src/AAR.Api/AAR.Api.csproj src/AAR.Api/
+
+RUN dotnet restore src/AAR.Api/AAR.Api.csproj
+
+COPY . .
+RUN dotnet publish src/AAR.Api/AAR.Api.csproj -c Release -o /app/publish
+
+# Runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+WORKDIR /app
+
+RUN adduser --disabled-password --gecos '' appuser
+COPY --from=build /app/publish .
+RUN mkdir -p /app/storage /app/logs && chown -R appuser:appuser /app
+
+USER appuser
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["dotnet", "AAR.Api.dll"]

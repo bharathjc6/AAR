@@ -1,0 +1,133 @@
+{
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "projectId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "overallScore": 78,
+  "structureScore": 85,
+  "codeQualityScore": 72,
+  "securityScore": 80,
+  "architectureScore": 75,
+  "summary": "Analysis completed with 23 findings across 4 categories. The project follows good structural patterns but has room for improvement in code quality and architecture. 2 security issues require immediate attention.",
+  "criticalCount": 0,
+  "highCount": 2,
+  "mediumCount": 8,
+  "lowCount": 10,
+  "infoCount": 3,
+  "generatedAt": "2024-01-15T14:32:00Z",
+  "findings": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "agentType": "Security",
+      "title": "Potential SQL Injection",
+      "description": "String concatenation detected in SQL query construction. This pattern is vulnerable to SQL injection attacks.",
+      "severity": "High",
+      "category": "Security",
+      "filePath": "src/Data/UserRepository.cs",
+      "lineRange": {
+        "startLine": 45,
+        "endLine": 47
+      },
+      "codeSnippet": "var query = \"SELECT * FROM Users WHERE Name = '\" + userName + \"'\";",
+      "suggestion": "Use parameterized queries or an ORM like Entity Framework to prevent SQL injection. Example: 'context.Users.Where(u => u.Name == userName)'"
+    },
+    {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "agentType": "Security",
+      "title": "Hardcoded API Key",
+      "description": "API key appears to be hardcoded in the source file. This is a security risk as secrets can be exposed through version control.",
+      "severity": "High",
+      "category": "Security",
+      "filePath": "src/Services/ExternalApiService.cs",
+      "lineRange": {
+        "startLine": 12,
+        "endLine": 12
+      },
+      "codeSnippet": "private const string ApiKey = \"sk-abc123def456...\";",
+      "suggestion": "Move API keys to environment variables or a secrets manager like Azure Key Vault. Use IConfiguration to access secrets at runtime."
+    },
+    {
+      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "agentType": "CodeQuality",
+      "title": "High Cyclomatic Complexity",
+      "description": "Method 'ProcessOrder' has a cyclomatic complexity of 28, which exceeds the recommended maximum of 10. Complex methods are harder to test and maintain.",
+      "severity": "Medium",
+      "category": "Complexity",
+      "filePath": "src/Services/OrderService.cs",
+      "lineRange": {
+        "startLine": 78,
+        "endLine": 156
+      },
+      "suggestion": "Refactor this method into smaller, focused methods. Consider using the Strategy pattern or a state machine for complex conditional logic."
+    },
+    {
+      "id": "d4e5f6a7-b8c9-0123-defa-234567890123",
+      "agentType": "CodeQuality",
+      "title": "Empty Catch Block",
+      "description": "Empty catch block detected. This silently swallows exceptions and can hide bugs.",
+      "severity": "Medium",
+      "category": "CodeQuality",
+      "filePath": "src/Controllers/PaymentController.cs",
+      "lineRange": {
+        "startLine": 92,
+        "endLine": 94
+      },
+      "codeSnippet": "catch (Exception ex) { }",
+      "suggestion": "Log the exception or handle it appropriately. If intentionally ignored, add a comment explaining why."
+    },
+    {
+      "id": "e5f6a7b8-c9d0-1234-efab-345678901234",
+      "agentType": "Structure",
+      "title": "Inconsistent Naming Convention",
+      "description": "Mixed naming conventions detected across directories: 12 use PascalCase, 5 use kebab-case.",
+      "severity": "Low",
+      "category": "Structure",
+      "suggestion": "Establish and document a consistent naming convention for directories. PascalCase is common in .NET projects."
+    },
+    {
+      "id": "f6a7b8c9-d0e1-2345-fabc-456789012345",
+      "agentType": "Structure",
+      "title": "Missing Test Directory",
+      "description": "No test directory found in the project structure. Tests are essential for maintaining code quality.",
+      "severity": "Medium",
+      "category": "Structure",
+      "suggestion": "Create a 'tests' directory with unit tests. Consider using xUnit or NUnit with FluentAssertions."
+    },
+    {
+      "id": "a7b8c9d0-e1f2-3456-abcd-567890123456",
+      "agentType": "ArchitectureAdvisor",
+      "title": "Missing Dependency Injection",
+      "description": "Several services create their dependencies directly using 'new'. This tightly couples components and makes testing difficult.",
+      "severity": "Medium",
+      "category": "Architecture",
+      "filePath": "src/Services/EmailService.cs",
+      "suggestion": "Use constructor injection to receive dependencies. Register services in Program.cs or a DI container."
+    },
+    {
+      "id": "b8c9d0e1-f2a3-4567-bcde-678901234567",
+      "agentType": "ArchitectureAdvisor",
+      "title": "No Layered Architecture",
+      "description": "Business logic appears to be mixed with data access and presentation concerns. This violates separation of concerns.",
+      "severity": "Medium",
+      "category": "Architecture",
+      "suggestion": "Consider adopting Clean Architecture or a similar layered approach. Separate Domain, Application, Infrastructure, and Presentation layers."
+    },
+    {
+      "id": "c9d0e1f2-a3b4-5678-cdef-789012345678",
+      "agentType": "CodeQuality",
+      "title": "Magic Numbers",
+      "description": "Multiple magic numbers found in the codebase (e.g., 3600, 86400, 1024). These reduce code readability.",
+      "severity": "Low",
+      "category": "Maintainability",
+      "suggestion": "Extract magic numbers into named constants with descriptive names like 'SecondsPerHour' or 'BytesPerKilobyte'."
+    },
+    {
+      "id": "d0e1f2a3-b4c5-6789-defa-890123456789",
+      "agentType": "Security",
+      "title": "Missing Input Validation",
+      "description": "User input is used directly without validation in several API endpoints.",
+      "severity": "Medium",
+      "category": "Security",
+      "filePath": "src/Controllers/UserController.cs",
+      "suggestion": "Add input validation using FluentValidation or Data Annotations. Validate all user input before processing."
+    }
+  ]
+}
