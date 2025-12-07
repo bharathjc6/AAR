@@ -64,30 +64,33 @@ public class PdfService : IPdfService
 
     private static void ComposeHeader(IContainer container, ReportDto report)
     {
-        container.Row(row =>
+        container.Column(column =>
         {
-            row.RelativeItem().Column(col =>
+            column.Item().Row(row =>
             {
-                col.Item().Text("Architecture Review Report")
-                    .FontSize(24).Bold().FontColor(Colors.Blue.Darken2);
-                    
-                col.Item().Text($"Project: {report.ProjectName}")
-                    .FontSize(14).SemiBold();
-                    
-                col.Item().Text($"Generated: {report.GeneratedAt:yyyy-MM-dd HH:mm:ss} UTC")
-                    .FontSize(10).FontColor(Colors.Grey.Darken1);
+                row.RelativeItem().Column(col =>
+                {
+                    col.Item().Text("Architecture Review Report")
+                        .FontSize(24).Bold().FontColor(Colors.Blue.Darken2);
+                        
+                    col.Item().Text($"Project: {report.ProjectName}")
+                        .FontSize(14).SemiBold();
+                        
+                    col.Item().Text($"Generated: {report.GeneratedAt:yyyy-MM-dd HH:mm:ss} UTC")
+                        .FontSize(10).FontColor(Colors.Grey.Darken1);
+                });
+
+                row.ConstantItem(80).Column(col =>
+                {
+                    col.Item().AlignCenter().Text("Health Score").FontSize(10);
+                    col.Item().AlignCenter().Text(report.HealthScore.ToString())
+                        .FontSize(28).Bold()
+                        .FontColor(GetHealthScoreColor(report.HealthScore));
+                });
             });
 
-            row.ConstantItem(80).Column(col =>
-            {
-                col.Item().AlignCenter().Text("Health Score").FontSize(10);
-                col.Item().AlignCenter().Text(report.HealthScore.ToString())
-                    .FontSize(28).Bold()
-                    .FontColor(GetHealthScoreColor(report.HealthScore));
-            });
+            column.Item().PaddingTop(10).LineHorizontal(2).LineColor(Colors.Blue.Darken2);
         });
-
-        container.PaddingTop(10).LineHorizontal(2).LineColor(Colors.Blue.Darken2);
     }
 
     private static void ComposeContent(IContainer container, ReportDto report)
