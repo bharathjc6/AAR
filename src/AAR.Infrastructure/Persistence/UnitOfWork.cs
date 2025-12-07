@@ -23,6 +23,7 @@ public class UnitOfWork : IUnitOfWork
     private IFileRecordRepository? _fileRecords;
     private IReviewFindingRepository? _reviewFindings;
     private IApiKeyRepository? _apiKeys;
+    private IChunkRepository? _chunks;
 
     public UnitOfWork(AarDbContext context)
     {
@@ -48,6 +49,10 @@ public class UnitOfWork : IUnitOfWork
     /// <inheritdoc/>
     public IApiKeyRepository ApiKeys => 
         _apiKeys ??= new ApiKeyRepository(_context);
+
+    /// <inheritdoc/>
+    public IChunkRepository Chunks => 
+        _chunks ??= new ChunkRepository(_context);
 
     /// <inheritdoc/>
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

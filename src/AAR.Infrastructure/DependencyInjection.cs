@@ -8,7 +8,15 @@ using AAR.Application.Messaging;
 using AAR.Domain.Interfaces;
 using AAR.Infrastructure.Messaging;
 using AAR.Infrastructure.Persistence;
+using AAR.Infrastructure.Repositories;
 using AAR.Infrastructure.Services;
+using AAR.Infrastructure.Services.Chunking;
+using AAR.Infrastructure.Services.Embedding;
+using AAR.Infrastructure.Services.Retrieval;
+using AAR.Infrastructure.Services.Telemetry;
+using AAR.Infrastructure.Services.Validation;
+using AAR.Infrastructure.Services.VectorStore;
+using AAR.Shared.Tokenization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,6 +60,9 @@ public static class DependencyInjection
 
         // Unit of Work
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+
+        // Repositories
+        services.AddScoped<IChunkRepository, ChunkRepository>();
 
         // Configure storage options
         services.Configure<FileSystemStorageOptions>(options =>
@@ -102,6 +113,52 @@ public static class DependencyInjection
         services.AddScoped<ICodeMetricsService, CodeMetricsService>();
         services.AddScoped<IPdfService, PdfService>();
 
+        // Tokenization services
+        services.Configure<TokenizerOptions>(configuration.GetSection(TokenizerOptions.SectionName));
+        services.AddSingleton<ITokenizerFactory, TokenizerFactory>();
+
+        // Chunking services
+        services.Configure<ChunkerOptions>(configuration.GetSection(ChunkerOptions.SectionName));
+        services.AddScoped<IChunker, SemanticChunker>();
+
+        // Embedding services
+        services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
+        var useMockEmbedding = configuration.GetValue<bool>("Embedding:UseMock") 
+            || Environment.GetEnvironmentVariable("USE_MOCK_EMBEDDING") == "true";
+        
+        if (useMockEmbedding)
+        {
+            services.AddSingleton<IEmbeddingService, MockEmbeddingService>();
+        }
+        else
+        {
+            services.AddSingleton<IEmbeddingService, AzureOpenAiEmbeddingService>();
+        }
+
+        // Vector store services
+        services.Configure<VectorStoreOptions>(configuration.GetSection(VectorStoreOptions.SectionName));
+        var vectorStoreType = configuration.GetValue<string>("VectorStore:Type") ?? "InMemory";
+        
+        if (vectorStoreType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddSingleton<IVectorStore, InMemoryVectorStore>();
+        }
+        else
+        {
+            // Default to InMemory for now, CosmosVectorStore can be added later
+            services.AddSingleton<IVectorStore, InMemoryVectorStore>();
+        }
+
+        // Retrieval orchestrator
+        services.Configure<ModelRouterOptions>(configuration.GetSection(ModelRouterOptions.SectionName));
+        services.AddScoped<IRetrievalOrchestrator, RetrievalOrchestrator>();
+
+        // Schema validation
+        services.Configure<SchemaValidationOptions>(configuration.GetSection(SchemaValidationOptions.SectionName));
+        services.AddSingleton<ISchemaValidator, SchemaValidator>();
+
+        // Telemetry
+        services.AddSingleton<IAnalysisTelemetry, AnalysisTelemetry>();
 
         // Security services
         services.AddScoped<ISecureFileService, SecureFileService>();

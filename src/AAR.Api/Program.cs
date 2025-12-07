@@ -74,7 +74,8 @@ try
     // =============================================================================
     
     // Check if running in integrated test mode (API + Worker in same process)
-    var integratedMode = Environment.GetEnvironmentVariable("AAR_INTEGRATED_MODE") == "true";
+    var integratedMode = Environment.GetEnvironmentVariable("AAR_INTEGRATED_MODE") == "true"
+        || builder.Configuration.GetValue<bool>("MassTransit:RegisterConsumers");
     if (integratedMode)
     {
         Environment.SetEnvironmentVariable("MASSTRANSIT_REGISTER_CONSUMERS", "true");

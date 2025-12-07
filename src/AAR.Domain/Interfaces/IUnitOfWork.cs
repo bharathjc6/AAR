@@ -34,6 +34,11 @@ public interface IUnitOfWork : IDisposable
     /// API key repository
     /// </summary>
     IApiKeyRepository ApiKeys { get; }
+
+    /// <summary>
+    /// Chunk repository for vector storage
+    /// </summary>
+    IChunkRepository Chunks { get; }
     
     /// <summary>
     /// Saves all changes to the database

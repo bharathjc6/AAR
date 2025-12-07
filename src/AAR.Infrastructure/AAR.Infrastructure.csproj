@@ -31,6 +31,9 @@
     <!-- Git operations -->
     <PackageReference Include="LibGit2Sharp" Version="0.31.0" />
     
+    <!-- Code Analysis (Roslyn) for semantic chunking -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    
     <!-- Logging -->
     <PackageReference Include="Serilog" Version="4.2.0" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="9.0.0" />

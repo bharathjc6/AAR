@@ -9,6 +9,13 @@
 
   <ItemGroup>
     <PackageReference Include="FluentValidation" Version="11.11.0" />
+    
+    <!-- Tokenization -->
+    <PackageReference Include="Tiktoken" Version="2.0.3" />
+    
+    <!-- Microsoft Extensions for DI and Options -->
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
   </ItemGroup>
 
 </Project>

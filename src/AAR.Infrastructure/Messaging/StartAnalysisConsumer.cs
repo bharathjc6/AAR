@@ -20,6 +20,8 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAgentOrchestrator _orchestrator;
     private readonly IBlobStorageService _blobService;
+    private readonly IRetrievalOrchestrator _retrievalOrchestrator;
+    private readonly IAnalysisTelemetry _telemetry;
     private readonly IPublishEndpoint _publishEndpoint;
     private readonly ILogger<StartAnalysisConsumer> _logger;
 
@@ -27,12 +29,16 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
         IUnitOfWork unitOfWork,
         IAgentOrchestrator orchestrator,
         IBlobStorageService blobService,
+        IRetrievalOrchestrator retrievalOrchestrator,
+        IAnalysisTelemetry telemetry,
         IPublishEndpoint publishEndpoint,
         ILogger<StartAnalysisConsumer> logger)
     {
         _unitOfWork = unitOfWork;
         _orchestrator = orchestrator;
         _blobService = blobService;
+        _retrievalOrchestrator = retrievalOrchestrator;
+        _telemetry = telemetry;
         _publishEndpoint = publishEndpoint;
         _logger = logger;
     }
@@ -87,8 +93,29 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
                 // Download files from blob storage
                 await ExtractProjectFilesAsync(project.StoragePath, workingDirectory, context.CancellationToken);
 
+                // INDEXING STEP: Chunk, embed, and index project files for RAG
+                var files = LoadSourceFiles(workingDirectory);
+                if (files.Count > 0)
+                {
+                    _logger.LogInformation("Indexing {FileCount} files for project {ProjectId}", files.Count, project.Id);
+                    var indexResult = await _retrievalOrchestrator.IndexProjectAsync(
+                        project.Id, files, context.CancellationToken);
+                    
+                    _logger.LogInformation(
+                        "Indexed project: {ChunksCreated} chunks, {Embeddings} embeddings, {Tokens} tokens in {Duration}ms",
+                        indexResult.ChunksCreated, indexResult.EmbeddingsGenerated, 
+                        indexResult.TotalTokens, indexResult.IndexingTimeMs);
+                }
+
                 // Run the analysis orchestrator
                 var report = await _orchestrator.AnalyzeAsync(project.Id, workingDirectory, context.CancellationToken);
+
+                // Log telemetry
+                var telemetrySummary = _telemetry.GetProjectSummary(project.Id);
+                _logger.LogInformation(
+                    "Analysis telemetry for {ProjectId}: {TotalTokens} tokens, {EmbeddingCalls} embedding calls, ${Cost:F4} estimated cost",
+                    project.Id, telemetrySummary.TotalTokensConsumed, 
+                    telemetrySummary.EmbeddingCalls, telemetrySummary.EstimatedCostUsd);
 
                 // Save the report
                 await _unitOfWork.Reports.AddAsync(report, context.CancellationToken);
@@ -198,6 +225,57 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
         {
             _logger.LogWarning(ex, "Failed to cleanup temp directory: {Directory}", directory);
         }
+    }
+
+    private static readonly HashSet<string> SourceExtensions = [
+        ".cs", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".go", ".rs", 
+        ".cpp", ".c", ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala",
+        ".json", ".xml", ".yaml", ".yml", ".md", ".txt"
+    ];
+
+    private static readonly HashSet<string> ExcludedDirectories = [
+        "node_modules", "bin", "obj", ".git", ".vs", ".idea", 
+        "packages", "dist", "build", "__pycache__", ".venv", "venv",
+        "coverage", ".nyc_output", "TestResults", ".nuget"
+    ];
+
+    private Dictionary<string, string> LoadSourceFiles(string workingDirectory)
+    {
+        var files = new Dictionary<string, string>();
+
+        foreach (var file in Directory.EnumerateFiles(workingDirectory, "*.*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(workingDirectory, file);
+            var extension = Path.GetExtension(file).ToLowerInvariant();
+
+            // Skip non-source files
+            if (!SourceExtensions.Contains(extension))
+                continue;
+
+            // Skip excluded directories
+            if (ExcludedDirectories.Any(dir => 
+                relativePath.Contains($"{Path.DirectorySeparatorChar}{dir}{Path.DirectorySeparatorChar}") ||
+                relativePath.Contains($"{Path.AltDirectorySeparatorChar}{dir}{Path.AltDirectorySeparatorChar}") ||
+                relativePath.StartsWith($"{dir}{Path.DirectorySeparatorChar}") ||
+                relativePath.StartsWith($"{dir}{Path.AltDirectorySeparatorChar}")))
+                continue;
+
+            try
+            {
+                var content = File.ReadAllText(file);
+                // Skip very large files (>500KB)
+                if (content.Length <= 500_000)
+                {
+                    files[relativePath] = content;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to read file: {File}", file);
+            }
+        }
+
+        return files;
     }
 }
 

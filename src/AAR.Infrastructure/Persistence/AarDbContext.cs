@@ -23,6 +23,7 @@ public class AarDbContext : DbContext
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<ReviewFinding> ReviewFindings => Set<ReviewFinding>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    public DbSet<Chunk> Chunks => Set<Chunk>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -127,7 +128,7 @@ public class AarDbContext : DbContext
             entity.HasOne(e => e.Report)
                 .WithMany(e => e.Findings)
                 .HasForeignKey(e => e.ReportId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.Restrict);  // Changed from Cascade to avoid multiple cascade paths in SQL Server
         });
 
         // ApiKey configuration
@@ -141,6 +142,32 @@ public class AarDbContext : DbContext
 
             entity.HasIndex(e => e.KeyPrefix);
             entity.HasIndex(e => e.IsActive);
+        });
+
+        // Chunk configuration for vector storage
+        modelBuilder.Entity<Chunk>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ChunkHash).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.FilePath).HasMaxLength(1000).IsRequired();
+            entity.Property(e => e.Language).HasMaxLength(50);
+            entity.Property(e => e.TextHash).HasMaxLength(64);
+            entity.Property(e => e.SemanticType).HasMaxLength(50);
+            entity.Property(e => e.SemanticName).HasMaxLength(200);
+            entity.Property(e => e.EmbeddingModel).HasMaxLength(100);
+            
+            // Large content fields
+            entity.Property(e => e.Content).HasMaxLength(100000);
+            entity.Property(e => e.EmbeddingJson).HasMaxLength(50000);
+
+            entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => e.ChunkHash).IsUnique();
+            entity.HasIndex(e => new { e.ProjectId, e.FilePath });
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
