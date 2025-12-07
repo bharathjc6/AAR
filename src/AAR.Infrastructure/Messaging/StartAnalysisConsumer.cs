@@ -3,6 +3,7 @@
 // MassTransit consumer for processing analysis commands
 // =============================================================================
 
+using AAR.Application.DTOs;
 using AAR.Application.Interfaces;
 using AAR.Application.Messaging;
 using AAR.Domain.Interfaces;
@@ -21,6 +22,8 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
     private readonly IAgentOrchestrator _orchestrator;
     private readonly IBlobStorageService _blobService;
     private readonly IRetrievalOrchestrator _retrievalOrchestrator;
+    private readonly IStreamingExtractor _streamingExtractor;
+    private readonly IJobProgressService _progressService;
     private readonly IAnalysisTelemetry _telemetry;
     private readonly IPublishEndpoint _publishEndpoint;
     private readonly ILogger<StartAnalysisConsumer> _logger;
@@ -30,6 +33,8 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
         IAgentOrchestrator orchestrator,
         IBlobStorageService blobService,
         IRetrievalOrchestrator retrievalOrchestrator,
+        IStreamingExtractor streamingExtractor,
+        IJobProgressService progressService,
         IAnalysisTelemetry telemetry,
         IPublishEndpoint publishEndpoint,
         ILogger<StartAnalysisConsumer> logger)
@@ -38,6 +43,8 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
         _orchestrator = orchestrator;
         _blobService = blobService;
         _retrievalOrchestrator = retrievalOrchestrator;
+        _streamingExtractor = streamingExtractor;
+        _progressService = progressService;
         _telemetry = telemetry;
         _publishEndpoint = publishEndpoint;
         _logger = logger;
@@ -90,8 +97,31 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
 
             try
             {
-                // Download files from blob storage
-                await ExtractProjectFilesAsync(project.StoragePath, workingDirectory, context.CancellationToken);
+                // Report extraction phase
+                await _progressService.ReportProgressAsync(new JobProgressUpdate
+                {
+                    ProjectId = project.Id,
+                    Phase = "Extracting",
+                    ProgressPercent = 5,
+                    CurrentFile = "Downloading archive...",
+                    FilesProcessed = 0,
+                    TotalFiles = 0
+                }, context.CancellationToken);
+
+                // Download files from blob storage using streaming extractor
+                var extractedFiles = await ExtractProjectFilesStreamingAsync(
+                    project.StoragePath, workingDirectory, project.Id, context.CancellationToken);
+
+                // Report indexing phase
+                await _progressService.ReportProgressAsync(new JobProgressUpdate
+                {
+                    ProjectId = project.Id,
+                    Phase = "Indexing",
+                    ProgressPercent = 20,
+                    CurrentFile = "Preparing files for analysis...",
+                    FilesProcessed = extractedFiles,
+                    TotalFiles = extractedFiles
+                }, context.CancellationToken);
 
                 // INDEXING STEP: Chunk, embed, and index project files for RAG
                 var files = LoadSourceFiles(workingDirectory);
@@ -107,6 +137,17 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
                         indexResult.TotalTokens, indexResult.IndexingTimeMs);
                 }
 
+                // Report analyzing phase
+                await _progressService.ReportProgressAsync(new JobProgressUpdate
+                {
+                    ProjectId = project.Id,
+                    Phase = "Analyzing",
+                    ProgressPercent = 40,
+                    CurrentFile = "Running AI analysis agents...",
+                    FilesProcessed = files.Count,
+                    TotalFiles = files.Count
+                }, context.CancellationToken);
+
                 // Run the analysis orchestrator
                 var report = await _orchestrator.AnalyzeAsync(project.Id, workingDirectory, context.CancellationToken);
 
@@ -117,11 +158,22 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
                     project.Id, telemetrySummary.TotalTokensConsumed, 
                     telemetrySummary.EmbeddingCalls, telemetrySummary.EstimatedCostUsd);
 
+                // Report saving phase
+                await _progressService.ReportProgressAsync(new JobProgressUpdate
+                {
+                    ProjectId = project.Id,
+                    Phase = "Saving",
+                    ProgressPercent = 90,
+                    CurrentFile = "Saving report...",
+                    FilesProcessed = files.Count,
+                    TotalFiles = files.Count
+                }, context.CancellationToken);
+
                 // Save the report
                 await _unitOfWork.Reports.AddAsync(report, context.CancellationToken);
 
                 // Update project status
-                project.CompleteAnalysis(fileCount: 0, totalLinesOfCode: 0);
+                project.CompleteAnalysis(fileCount: files.Count, totalLinesOfCode: 0);
                 await _unitOfWork.Projects.UpdateAsync(project, context.CancellationToken);
                 await _unitOfWork.SaveChangesAsync(context.CancellationToken);
 
@@ -130,6 +182,23 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
                 _logger.LogInformation(
                     "Completed analysis for project {ProjectId}. Report {ReportId} created in {Duration}ms",
                     project.Id, report.Id, duration.TotalMilliseconds);
+
+                // Report completion via progress service
+                await _progressService.ReportCompletionAsync(new JobCompletionUpdate
+                {
+                    ProjectId = project.Id,
+                    ReportId = report.Id,
+                    IsSuccess = true,
+                    ProcessingTimeSeconds = (int)duration.TotalSeconds,
+                    Statistics = new JobStatistics
+                    {
+                        FilesProcessed = files.Count,
+                        FindingsCount = report.Findings.Count,
+                        HighSeverityCount = report.Findings.Count(f => f.Severity == Domain.Enums.Severity.High || f.Severity == Domain.Enums.Severity.Critical),
+                        MediumSeverityCount = report.Findings.Count(f => f.Severity == Domain.Enums.Severity.Medium),
+                        LowSeverityCount = report.Findings.Count(f => f.Severity == Domain.Enums.Severity.Low || f.Severity == Domain.Enums.Severity.Info)
+                    }
+                }, context.CancellationToken);
 
                 // Publish completed event
                 await _publishEndpoint.Publish(new AnalysisCompletedEvent
@@ -210,6 +279,64 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
         File.Delete(zipPath);
         
         _logger.LogDebug("Extracted project files to {Directory}", targetDirectory);
+    }
+
+    /// <summary>
+    /// Extracts project files using streaming extractor for memory efficiency
+    /// </summary>
+    private async Task<int> ExtractProjectFilesStreamingAsync(
+        string? storagePath,
+        string targetDirectory,
+        Guid projectId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(storagePath))
+        {
+            _logger.LogWarning("No storage path specified for project.");
+            return 0;
+        }
+
+        const string container = "projects";
+        var blobName = storagePath;
+
+        _logger.LogDebug("Downloading blob from container '{Container}', path '{BlobName}'", container, blobName);
+
+        var blobStream = await _blobService.DownloadAsync(container, blobName, cancellationToken);
+        if (blobStream == null)
+        {
+            throw new InvalidOperationException($"Failed to download blob {container}/{blobName}");
+        }
+
+        var extractedCount = 0;
+        await using (blobStream)
+        {
+            // Use streaming extractor for memory-efficient extraction
+            await foreach (var file in _streamingExtractor.ExtractStreamingAsync(
+                blobStream,
+                targetDirectory,
+                maxFileSize: 10 * 1024 * 1024, // 10MB per file
+                maxTotalFiles: 10000,
+                progressCallback: async (extracted, total, current) =>
+                {
+                    await _progressService.ReportProgressAsync(new JobProgressUpdate
+                    {
+                        ProjectId = projectId,
+                        Phase = "Extracting",
+                        ProgressPercent = 5 + (15.0 * extracted / Math.Max(1, total)),
+                        CurrentFile = current,
+                        FilesProcessed = extracted,
+                        TotalFiles = total
+                    }, cancellationToken);
+                },
+                cancellationToken: cancellationToken))
+            {
+                extractedCount++;
+                _logger.LogDebug("Extracted: {File} ({Size} bytes)", file.RelativePath, file.SizeBytes);
+            }
+        }
+
+        _logger.LogInformation("Extracted {Count} files to {Directory}", extractedCount, targetDirectory);
+        return extractedCount;
     }
 
     private void CleanupTempDirectory(string directory)

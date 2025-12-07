@@ -362,6 +362,29 @@ Total test count: **108 tests** (up from 91)
 
 ---
 
+## Service Integration Summary
+
+The following services are now fully integrated into the processing pipeline:
+
+| Service | Purpose | Integration Point |
+|---------|---------|-------------------|
+| `JobProgressService` | Real-time progress reporting via SignalR | `StartAnalysisConsumer` |
+| `StreamingZipExtractor` | Memory-efficient archive extraction | `StartAnalysisConsumer` |
+| `ResilientEmbeddingService` | Decorator with retry/circuit breaker | DI wrapping `IEmbeddingService` |
+| `PreflightService` | Pre-analysis cost/time estimation | `PreflightController` |
+| `UploadSessionService` | Resumable chunked uploads | `UploadsController` |
+| `InMemoryMetricsService` | Performance metrics collection | All services |
+
+### Removed/Deprecated Services
+- `InMemoryJobQueueService` - Replaced by MassTransit message bus. Retained for testing/fallback.
+
+### Key Integration Changes
+1. **StartAnalysisConsumer** now reports progress phases (Extracting → Indexing → Analyzing → Saving) to connected clients via SignalR
+2. **ResilientEmbeddingService** wraps the inner embedding service with Polly resilience policies
+3. **StreamingZipExtractor** replaces direct `ZipFile.ExtractToDirectory` for memory-efficient extraction
+
+---
+
 ## Rollback Procedure
 
 If issues arise:
@@ -374,11 +397,13 @@ If issues arise:
 
 ## Known Limitations
 
-1. **In-Memory Queue** - Current implementation uses in-memory queue. For production high-availability, integrate Azure Service Bus or similar.
+1. **MassTransit In-Memory** - Current configuration uses in-memory transport. For production high-availability, configure Azure Service Bus or RabbitMQ transport.
 
 2. **Metrics Export** - Metrics are in-memory only. Configure Application Insights or Prometheus for production monitoring.
 
 3. **SignalR Scaling** - For multi-instance deployment, configure Redis backplane for SignalR.
+
+4. **Rate Limiting** - Uses in-memory sliding window. For distributed rate limiting, configure Redis-backed limiter.
 
 ---
 
@@ -389,8 +414,9 @@ If issues arise:
 - [ ] Redis backplane for SignalR scaling
 - [ ] Kubernetes horizontal pod autoscaling based on queue depth
 - [ ] Cost tracking and billing integration
+- [ ] Distributed rate limiting with Redis
 
 ---
 
 *Last Updated: December 2024*
-*Version: 2.0.0*
+*Version: 2.1.0*

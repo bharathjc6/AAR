@@ -22,6 +22,9 @@ using AAR.Shared.Tokenization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Polly.Registry;
 
 namespace AAR.Infrastructure;
 
@@ -138,18 +141,37 @@ public static class DependencyInjection
         services.Configure<ChunkerOptions>(configuration.GetSection(ChunkerOptions.SectionName));
         services.AddScoped<IChunker, SemanticChunker>();
 
-        // Embedding services
+        // Embedding services with resilience decorator
         services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
         var useMockEmbedding = configuration.GetValue<bool>("Embedding:UseMock") 
             || Environment.GetEnvironmentVariable("USE_MOCK_EMBEDDING") == "true";
         
+        // Register the inner embedding service
         if (useMockEmbedding)
         {
-            services.AddSingleton<IEmbeddingService, MockEmbeddingService>();
+            services.AddSingleton<MockEmbeddingService>();
+            services.AddSingleton<IEmbeddingService>(sp =>
+            {
+                var inner = sp.GetRequiredService<MockEmbeddingService>();
+                var pipelineProvider = sp.GetRequiredService<ResiliencePipelineProvider<string>>();
+                var options = sp.GetRequiredService<IOptions<EmbeddingProcessingOptions>>();
+                var metrics = sp.GetRequiredService<IMetricsService>();
+                var logger = sp.GetRequiredService<ILogger<ResilientEmbeddingService>>();
+                return new ResilientEmbeddingService(inner, pipelineProvider, options, metrics, logger);
+            });
         }
         else
         {
-            services.AddSingleton<IEmbeddingService, AzureOpenAiEmbeddingService>();
+            services.AddSingleton<AzureOpenAiEmbeddingService>();
+            services.AddSingleton<IEmbeddingService>(sp =>
+            {
+                var inner = sp.GetRequiredService<AzureOpenAiEmbeddingService>();
+                var pipelineProvider = sp.GetRequiredService<ResiliencePipelineProvider<string>>();
+                var options = sp.GetRequiredService<IOptions<EmbeddingProcessingOptions>>();
+                var metrics = sp.GetRequiredService<IMetricsService>();
+                var logger = sp.GetRequiredService<ILogger<ResilientEmbeddingService>>();
+                return new ResilientEmbeddingService(inner, pipelineProvider, options, metrics, logger);
+            });
         }
 
         // Vector store services
@@ -189,8 +211,11 @@ public static class DependencyInjection
         // Streaming extraction
         services.AddSingleton<IStreamingExtractor, StreamingZipExtractor>();
 
-        // Job queue (in-memory for dev, swap for Azure Service Bus in prod)
-        services.AddSingleton<IJobQueueService, InMemoryJobQueueService>();
+        // Job progress reporting (SignalR streaming)
+        services.AddScoped<IJobProgressService, JobProgressService>();
+
+        // NOTE: InMemoryJobQueueService removed - MassTransit handles all queue operations
+        // For Azure Service Bus in prod, configure MassTransit with Azure transport
 
         // Resilience policies (Polly)
         services.AddResiliencePolicies();
