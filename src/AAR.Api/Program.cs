@@ -4,9 +4,11 @@
 // Security-hardened configuration following OWASP guidelines
 // =============================================================================
 
+using AAR.Api.Hubs;
 using AAR.Api.Middleware;
 using AAR.Api.Security;
 using AAR.Application;
+using AAR.Application.Interfaces;
 using AAR.Infrastructure;
 using AAR.Infrastructure.Persistence;
 using Asp.Versioning;
@@ -120,6 +122,16 @@ try
     // Controllers and endpoints
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
+    
+    // SignalR for real-time progress streaming
+    builder.Services.AddSignalR(options =>
+    {
+        options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+        options.MaximumReceiveMessageSize = 32 * 1024; // 32KB max message
+        options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+        options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+    });
+    builder.Services.AddSingleton<IAnalysisHubNotifier, SignalRAnalysisHubNotifier>();
     
     // Swagger/OpenAPI
     builder.Services.AddSwaggerGen(options =>
@@ -329,6 +341,9 @@ try
     // Controllers with rate limiting
     app.MapControllers()
        .RequireRateLimiting("apikey");
+
+    // SignalR hub for real-time progress
+    app.MapHub<AnalysisHub>("/hubs/analysis");
 
     // =============================================================================
     // Run Database Migrations

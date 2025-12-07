@@ -24,6 +24,9 @@ public class AarDbContext : DbContext
     public DbSet<ReviewFinding> ReviewFindings => Set<ReviewFinding>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<Chunk> Chunks => Set<Chunk>();
+    public DbSet<JobCheckpoint> JobCheckpoints => Set<JobCheckpoint>();
+    public DbSet<UploadSession> UploadSessions => Set<UploadSession>();
+    public DbSet<OrganizationQuota> OrganizationQuotas => Set<OrganizationQuota>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -168,6 +171,53 @@ public class AarDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // JobCheckpoint configuration
+        modelBuilder.Entity<JobCheckpoint>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
+            entity.Property(e => e.SerializedState).HasMaxLength(50000);
+            
+            entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.LastCheckpointAt);
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // UploadSession configuration
+        modelBuilder.Entity<UploadSession>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ProjectName).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ProjectDescription).HasMaxLength(2000);
+            entity.Property(e => e.FileName).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.StoragePath).HasMaxLength(500);
+            entity.Property(e => e.ContentHash).HasMaxLength(100);
+            entity.Property(e => e.UploadedParts).HasMaxLength(10000);
+            
+            entity.HasIndex(e => e.ApiKeyId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.ExpiresAt);
+        });
+
+        // OrganizationQuota configuration
+        modelBuilder.Entity<OrganizationQuota>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.OrganizationId).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.SuspensionReason).HasMaxLength(500);
+            
+            entity.Property(e => e.TotalCredits).HasPrecision(18, 4);
+            entity.Property(e => e.CreditsUsed).HasPrecision(18, 4);
+            
+            entity.HasIndex(e => e.OrganizationId).IsUnique();
+            entity.HasIndex(e => e.PeriodEndDate);
         });
     }
 }

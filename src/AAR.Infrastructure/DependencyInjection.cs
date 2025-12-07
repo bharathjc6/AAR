@@ -3,6 +3,7 @@
 // Extension methods for registering infrastructure services
 // =============================================================================
 
+using AAR.Application.Configuration;
 using AAR.Application.Interfaces;
 using AAR.Application.Messaging;
 using AAR.Domain.Interfaces;
@@ -12,6 +13,7 @@ using AAR.Infrastructure.Repositories;
 using AAR.Infrastructure.Services;
 using AAR.Infrastructure.Services.Chunking;
 using AAR.Infrastructure.Services.Embedding;
+using AAR.Infrastructure.Services.Resilience;
 using AAR.Infrastructure.Services.Retrieval;
 using AAR.Infrastructure.Services.Telemetry;
 using AAR.Infrastructure.Services.Validation;
@@ -63,6 +65,16 @@ public static class DependencyInjection
 
         // Repositories
         services.AddScoped<IChunkRepository, ChunkRepository>();
+        services.AddScoped<IJobCheckpointRepository, JobCheckpointRepository>();
+        services.AddScoped<IUploadSessionRepository, UploadSessionRepository>();
+        services.AddScoped<IOrganizationQuotaRepository, OrganizationQuotaRepository>();
+
+        // Scaling configuration
+        services.Configure<ScaleLimitsOptions>(configuration.GetSection(ScaleLimitsOptions.SectionName));
+        services.Configure<EmbeddingProcessingOptions>(configuration.GetSection(EmbeddingProcessingOptions.SectionName));
+        services.Configure<WorkerProcessingOptions>(configuration.GetSection(WorkerProcessingOptions.SectionName));
+        services.Configure<StoragePolicyOptions>(configuration.GetSection(StoragePolicyOptions.SectionName));
+        services.Configure<ResumableUploadOptions>(configuration.GetSection(ResumableUploadOptions.SectionName));
 
         // Configure storage options
         services.Configure<FileSystemStorageOptions>(options =>
@@ -159,10 +171,24 @@ public static class DependencyInjection
 
         // Telemetry
         services.AddSingleton<IAnalysisTelemetry, AnalysisTelemetry>();
+        services.AddSingleton<IMetricsService, InMemoryMetricsService>();
 
         // Security services
         services.AddScoped<ISecureFileService, SecureFileService>();
         services.AddScoped<IVirusScanService, MockVirusScanService>();
+
+        // Preflight & upload services
+        services.AddScoped<IPreflightService, PreflightService>();
+        services.AddScoped<IUploadSessionService, UploadSessionService>();
+
+        // Streaming extraction
+        services.AddSingleton<IStreamingExtractor, StreamingZipExtractor>();
+
+        // Job queue (in-memory for dev, swap for Azure Service Bus in prod)
+        services.AddSingleton<IJobQueueService, InMemoryJobQueueService>();
+
+        // Resilience policies (Polly)
+        services.AddResiliencePolicies();
 
         return services;
     }
