@@ -4,7 +4,9 @@
 // =============================================================================
 
 using AAR.Application.Interfaces;
+using AAR.Application.Messaging;
 using AAR.Domain.Interfaces;
+using AAR.Infrastructure.Messaging;
 using AAR.Infrastructure.Persistence;
 using AAR.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
@@ -66,12 +68,6 @@ public static class DependencyInjection
                 ?? Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING");
         });
 
-        services.Configure<AzureQueueStorageOptions>(options =>
-        {
-            options.ConnectionString = configuration["Azure:StorageConnectionString"]
-                ?? Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING");
-        });
-
         services.Configure<AzureOpenAiOptions>(options =>
         {
             options.Endpoint = configuration["Azure:OpenAI:Endpoint"]
@@ -90,13 +86,14 @@ public static class DependencyInjection
         if (useAzureStorage)
         {
             services.AddSingleton<IBlobStorageService, AzureBlobStorage>();
-            services.AddSingleton<IQueueService, AzureQueueService>();
         }
         else
         {
             services.AddSingleton<IBlobStorageService, FileSystemBlobStorage>();
-            services.AddSingleton<IQueueService, InMemoryQueueService>();
         }
+
+        // MassTransit messaging (includes IMessageBus registration)
+        services.AddMassTransitMessaging(configuration);
 
         // Other services
         services.AddSingleton<IPromptTemplateProvider, PromptTemplateProvider>();
@@ -104,6 +101,7 @@ public static class DependencyInjection
         services.AddScoped<IGitService, GitService>();
         services.AddScoped<ICodeMetricsService, CodeMetricsService>();
         services.AddScoped<IPdfService, PdfService>();
+
 
         // Security services
         services.AddScoped<ISecureFileService, SecureFileService>();

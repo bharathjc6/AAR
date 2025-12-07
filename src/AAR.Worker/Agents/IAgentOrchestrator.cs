@@ -1,18 +1,7 @@
-using AAR.Domain.Entities;
+// =============================================================================
+// This file is deprecated. Use AAR.Application.Interfaces.IAgentOrchestrator instead.
+// Kept for backward compatibility - redirects to the new location
+// =============================================================================
 
-namespace AAR.Worker.Agents;
-
-/// <summary>
-/// Interface for the agent orchestrator that coordinates all analysis agents.
-/// </summary>
-public interface IAgentOrchestrator
-{
-    /// <summary>
-    /// Runs all agents and produces a consolidated report.
-    /// </summary>
-    /// <param name="projectId">The project ID.</param>
-    /// <param name="workingDirectory">The directory containing the project files.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The consolidated report.</returns>
-    Task<Report> AnalyzeAsync(Guid projectId, string workingDirectory, CancellationToken cancellationToken = default);
-}
+// Re-export interface from the Application layer
+global using IAgentOrchestrator = AAR.Application.Interfaces.IAgentOrchestrator;

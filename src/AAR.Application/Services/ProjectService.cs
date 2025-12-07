@@ -5,6 +5,7 @@
 
 using AAR.Application.DTOs;
 using AAR.Application.Interfaces;
+using AAR.Application.Messaging;
 using AAR.Domain.Entities;
 using AAR.Domain.Enums;
 using AAR.Domain.Interfaces;
@@ -20,23 +21,22 @@ public class ProjectService : IProjectService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBlobStorageService _blobStorage;
-    private readonly IQueueService _queueService;
+    private readonly IMessageBus _messageBus;
     private readonly IGitService _gitService;
     private readonly ILogger<ProjectService> _logger;
 
     private const string ProjectsContainer = "projects";
-    private const string AnalysisQueue = "analysis-jobs";
 
     public ProjectService(
         IUnitOfWork unitOfWork,
         IBlobStorageService blobStorage,
-        IQueueService queueService,
+        IMessageBus messageBus,
         IGitService gitService,
         ILogger<ProjectService> logger)
     {
         _unitOfWork = unitOfWork;
         _blobStorage = blobStorage;
-        _queueService = queueService;
+        _messageBus = messageBus;
         _gitService = gitService;
         _logger = logger;
     }
@@ -213,16 +213,25 @@ public class ProjectService : IProjectService
             await _unitOfWork.Projects.UpdateAsync(project, cancellationToken);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            // Enqueue analysis job
-            var jobMessage = new AnalysisJobMessage
+            // Send analysis command via MassTransit
+            var correlationId = Guid.NewGuid();
+            var command = new StartAnalysisCommand
             {
                 ProjectId = projectId,
-                EnqueuedAt = DateTime.UtcNow
+                Priority = 0,
+                CorrelationId = correlationId,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["EnqueuedAt"] = DateTime.UtcNow.ToString("O"),
+                    ["InitiatedBy"] = "ProjectService"
+                }
             };
 
-            await _queueService.EnqueueAsync(AnalysisQueue, jobMessage, cancellationToken: cancellationToken);
+            await _messageBus.SendAsync(command, cancellationToken: cancellationToken);
 
-            _logger.LogInformation("Analysis job enqueued for project: {ProjectId}", projectId);
+            _logger.LogInformation(
+                "Analysis command sent for project: {ProjectId} with CorrelationId: {CorrelationId}",
+                projectId, correlationId);
 
             return new StartAnalysisResponse
             {

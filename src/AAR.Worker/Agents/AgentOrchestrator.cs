@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using AAR.Application.DTOs;
+using AAR.Application.Interfaces;
 using AAR.Application.Services;
 using AAR.Domain.Entities;
 using AAR.Domain.Enums;

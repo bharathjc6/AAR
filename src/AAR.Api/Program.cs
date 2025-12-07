@@ -73,11 +73,26 @@ try
     // Configure Services
     // =============================================================================
     
+    // Check if running in integrated test mode (API + Worker in same process)
+    var integratedMode = Environment.GetEnvironmentVariable("AAR_INTEGRATED_MODE") == "true";
+    if (integratedMode)
+    {
+        Environment.SetEnvironmentVariable("MASSTRANSIT_REGISTER_CONSUMERS", "true");
+        Log.Information("Running in integrated mode with consumer registration");
+    }
+    
     // Add application layer services
     builder.Services.AddApplicationServices();
     
     // Add infrastructure layer services
     builder.Services.AddInfrastructureServices(builder.Configuration);
+    
+    // Register agents if in integrated mode (for local testing)
+    if (integratedMode)
+    {
+        // These would normally be registered in the Worker
+        builder.Services.AddScoped<AAR.Application.Interfaces.IAgentOrchestrator, AAR.Api.TestSupport.MockAgentOrchestrator>();
+    }
 
     // Add secure authentication (JWT + API key fallback)
     builder.Services.AddSecureAuthentication(builder.Configuration);
