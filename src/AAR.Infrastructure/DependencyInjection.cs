@@ -64,6 +64,11 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         // Repositories
+        services.AddScoped<IApiKeyRepository, ApiKeyRepository>();
+        services.AddScoped<IProjectRepository, ProjectRepository>();
+        services.AddScoped<IReportRepository, ReportRepository>();
+        services.AddScoped<IFileRecordRepository, FileRecordRepository>();
+        services.AddScoped<IReviewFindingRepository, ReviewFindingRepository>();
         services.AddScoped<IChunkRepository, ChunkRepository>();
         services.AddScoped<IJobCheckpointRepository, JobCheckpointRepository>();
         services.AddScoped<IUploadSessionRepository, UploadSessionRepository>();
