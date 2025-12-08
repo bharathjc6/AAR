@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="FluentValidation" Version="11.11.0" />
+    <PackageReference Include="FluentValidation" Version="12.1.1" />
     
     <!-- Tokenization -->
     <PackageReference Include="Tiktoken" Version="2.0.3" />
