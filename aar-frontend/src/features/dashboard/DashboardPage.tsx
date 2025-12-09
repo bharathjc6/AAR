@@ -13,7 +13,6 @@ import {
   TrendingUp as TrendingUpIcon,
   Assessment as AssessmentIcon,
   Speed as SpeedIcon,
-  Warning as WarningIcon,
   CheckCircle as CheckCircleIcon,
   Folder as FolderIcon,
 } from '@mui/icons-material';
@@ -135,7 +134,7 @@ export default function DashboardPage() {
             Dashboard
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Welcome back! Here's an overview of your projects.
+            Welcome back! Here&apos;s an overview of your projects.
           </Typography>
         </Box>
         <Button

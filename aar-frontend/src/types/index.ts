@@ -142,6 +142,8 @@ export interface Report {
   generatedAt: string;
   pdfDownloadUrl?: string;
   jsonDownloadUrl?: string;
+  filesAnalyzed?: number;
+  totalTokens?: number;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '../test/test-utils';
-import { SeverityBadge } from './SeverityBadge';
+import SeverityBadge from './SeverityBadge';
 
 describe('SeverityBadge', () => {
   it('renders critical severity', () => {

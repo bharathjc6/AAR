@@ -172,7 +172,7 @@ export default function LoginPage() {
 
             {/* Help text */}
             <Typography variant="body2" color="text.secondary" textAlign="center">
-              Don't have an API key?{' '}
+              Don&apos;t have an API key?{' '}
               <Link href="#" underline="hover">
                 Contact your administrator
               </Link>

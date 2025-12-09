@@ -22,7 +22,6 @@ import {
   Divider,
   List,
   ListItem,
-  ListItemText,
 } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import {
@@ -115,13 +114,17 @@ export default function ProjectDetailsPage() {
 
   // Count findings by severity
   const severityCounts = useMemo(() => {
-    if (!report?.findings) return { Critical: 0, High: 0, Medium: 0, Low: 0, Info: 0 };
+    const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    if (!report?.findings) return counts;
     return report.findings.reduce(
       (acc, f) => {
-        acc[f.severity]++;
+        const severity = typeof f.severity === 'number' 
+          ? (['critical', 'high', 'medium', 'low', 'info'] as const)[f.severity] 
+          : f.severity;
+        if (severity in acc) acc[severity as keyof typeof acc]++;
         return acc;
       },
-      { Critical: 0, High: 0, Medium: 0, Low: 0, Info: 0 } as Record<Severity, number>
+      counts
     );
   }, [report?.findings]);
 
@@ -342,7 +345,7 @@ export default function ProjectDetailsPage() {
             <>
               {/* Summary Cards */}
               <Grid container spacing={3} sx={{ mb: 3 }}>
-                <Grid size={{ xs: 12, md: 4 }}>
+                <Grid item xs={12} md={4}>
                   <Card>
                     <Typography variant="overline" color="text.secondary">
                       Health Score
@@ -361,7 +364,7 @@ export default function ProjectDetailsPage() {
                     </Box>
                   </Card>
                 </Grid>
-                <Grid size={{ xs: 12, md: 4 }}>
+                <Grid item xs={12} md={4}>
                   <Card>
                     <Typography variant="overline" color="text.secondary">
                       Total Findings
@@ -370,30 +373,30 @@ export default function ProjectDetailsPage() {
                       {report.findings.length}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                      {severityCounts.Critical > 0 && (
+                      {severityCounts.critical > 0 && (
                         <Chip
                           size="small"
-                          label={`${severityCounts.Critical} Critical`}
+                          label={`${severityCounts.critical} Critical`}
                           sx={{ bgcolor: 'error.main', color: 'white' }}
                         />
                       )}
-                      {severityCounts.High > 0 && (
+                      {severityCounts.high > 0 && (
                         <Chip
                           size="small"
-                          label={`${severityCounts.High} High`}
+                          label={`${severityCounts.high} High`}
                           sx={{ bgcolor: 'error.light', color: 'white' }}
                         />
                       )}
                     </Box>
                   </Card>
                 </Grid>
-                <Grid size={{ xs: 12, md: 4 }}>
+                <Grid item xs={12} md={4}>
                   <Card>
                     <Typography variant="overline" color="text.secondary">
                       Files Analyzed
                     </Typography>
                     <Typography variant="h2" fontWeight={700}>
-                      {report.filesAnalyzed}
+                      {report.filesAnalyzed ?? report.statistics?.analyzedFiles ?? 0}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       {report.totalTokens?.toLocaleString() || 0} tokens processed
@@ -423,7 +426,9 @@ export default function ProjectDetailsPage() {
                       description="The analysis didn't find any significant issues in your codebase."
                     />
                   ) : (
-                    Object.entries(findingsByCategory).map(([category, findings]) => (
+                    Object.entries(findingsByCategory).map(([category, categoryFindings]) => {
+                      const findings = categoryFindings as Finding[];
+                      return (
                       <Accordion
                         key={category}
                         expanded={expandedCategory === category}
@@ -529,7 +534,8 @@ export default function ProjectDetailsPage() {
                           </List>
                         </AccordionDetails>
                       </Accordion>
-                    ))
+                    );
+                    })
                   )}
                 </TabPanel>
 

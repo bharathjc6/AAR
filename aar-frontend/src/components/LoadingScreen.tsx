@@ -1,10 +1,14 @@
 import { Box, CircularProgress, Typography } from '@mui/material';
 import { motion } from 'framer-motion';
 
+interface LoadingScreenProps {
+  message?: string;
+}
+
 /**
  * Full-screen loading indicator shown during route transitions
  */
-export default function LoadingScreen() {
+export default function LoadingScreen({ message = 'Loading...' }: LoadingScreenProps) {
   return (
     <Box
       component={motion.div}
@@ -34,7 +38,7 @@ export default function LoadingScreen() {
         <CircularProgress size={48} thickness={4} />
       </motion.div>
       <Typography variant="body2" color="text.secondary">
-        Loading...
+        {message}
       </Typography>
     </Box>
   );

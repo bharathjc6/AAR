@@ -13,7 +13,6 @@ import {
   ListItem,
   ListItemIcon,
   ListItemText,
-  Chip,
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
@@ -21,7 +20,6 @@ import {
   FolderZip as ZipIcon,
   InsertDriveFile as FileIcon,
   CheckCircle as CheckIcon,
-  Warning as WarningIcon,
   ArrowBack as BackIcon,
 } from '@mui/icons-material';
 import { useDropzone } from 'react-dropzone';

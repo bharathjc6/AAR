@@ -19,16 +19,18 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../../components';
-import { useThemeContext } from '../../theme/ThemeContext';
+import { useThemeMode } from '../../theme/ThemeContext';
 import { useAuthStore } from '../../hooks';
+import { getApiKey } from '../../api';
 
 /**
  * Settings page for theme, API configuration, and logout
  */
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const { mode, toggleColorMode } = useThemeContext();
-  const { apiKey, logout } = useAuthStore();
+  const { mode, toggleTheme } = useThemeMode();
+  const { logout } = useAuthStore();
+  const apiKey = getApiKey();
 
   // State
   const [showApiKey, setShowApiKey] = useState(false);
@@ -79,7 +81,7 @@ export default function SettingsPage() {
           control={
             <Switch
               checked={mode === 'dark'}
-              onChange={toggleColorMode}
+              onChange={toggleTheme}
               color="primary"
             />
           }
