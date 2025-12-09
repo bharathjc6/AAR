@@ -54,13 +54,17 @@ public static class DependencyInjection
             // TODO: Configure Azure SQL connection string via CONNECTION_STRING environment variable
             services.AddDbContext<AarDbContext>(options =>
                 options.UseSqlServer(connectionString, 
-                    sqlOptions => sqlOptions.EnableRetryOnFailure()));
+                    sqlOptions => sqlOptions.EnableRetryOnFailure())
+                .ConfigureWarnings(w => w.Ignore(
+                    Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
         }
         else
         {
             // SQLite for local development
             services.AddDbContext<AarDbContext>(options =>
-                options.UseSqlite(connectionString));
+                options.UseSqlite(connectionString)
+                .ConfigureWarnings(w => w.Ignore(
+                    Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
         }
 
         // Unit of Work

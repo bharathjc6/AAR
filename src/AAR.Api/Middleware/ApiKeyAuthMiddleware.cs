@@ -21,7 +21,7 @@ public class ApiKeyAuthMiddleware
     [
         "/health",
         "/swagger",
-        "/"
+        "/hubs"
     ];
 
     public ApiKeyAuthMiddleware(RequestDelegate next, ILogger<ApiKeyAuthMiddleware> logger)
