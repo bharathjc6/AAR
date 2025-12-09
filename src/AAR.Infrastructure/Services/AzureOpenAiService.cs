@@ -41,18 +41,26 @@ public class AzureOpenAiService : IOpenAiService
         _promptProvider = promptProvider;
         _logger = logger;
 
-        // TODO: Set these environment variables with your Azure OpenAI credentials
+        // Get endpoint from options or environment variable
         var endpoint = _options.Endpoint ?? Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
         var apiKey = _options.ApiKey ?? Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
 
-        if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(apiKey) 
-            && !endpoint.Contains("TODO") && !apiKey.Contains("TODO"))
+        // Validate credentials: must be non-empty, not contain TODO placeholders, and endpoint must be valid URI
+        var hasValidEndpoint = !string.IsNullOrWhiteSpace(endpoint) 
+            && !endpoint.Contains("TODO", StringComparison.OrdinalIgnoreCase)
+            && Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri)
+            && (endpointUri.Scheme == Uri.UriSchemeHttps || endpointUri.Scheme == Uri.UriSchemeHttp);
+        
+        var hasValidApiKey = !string.IsNullOrWhiteSpace(apiKey) 
+            && !apiKey.Contains("TODO", StringComparison.OrdinalIgnoreCase);
+
+        if (hasValidEndpoint && hasValidApiKey)
         {
             try
             {
-                _client = new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey));
+                _client = new AzureOpenAIClient(new Uri(endpoint!), new AzureKeyCredential(apiKey!));
                 IsMockMode = false;
-                _logger.LogInformation("AzureOpenAiService initialized with real Azure OpenAI client");
+                _logger.LogInformation("AzureOpenAiService initialized with real Azure OpenAI client at {Endpoint}", endpoint);
             }
             catch (Exception ex)
             {
@@ -62,7 +70,8 @@ public class AzureOpenAiService : IOpenAiService
         }
         else
         {
-            _logger.LogInformation("Azure OpenAI credentials not configured. Using mock mode.");
+            _logger.LogInformation("Azure OpenAI credentials not configured or invalid. Using mock mode. Endpoint present: {HasEndpoint}, ApiKey present: {HasApiKey}", 
+                !string.IsNullOrWhiteSpace(endpoint), !string.IsNullOrWhiteSpace(apiKey));
             IsMockMode = true;
         }
     }

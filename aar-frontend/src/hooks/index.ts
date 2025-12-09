@@ -6,6 +6,7 @@ export {
   useCreateProjectFromGit,
   useCreateProjectFromZip,
   useStartAnalysis,
+  useResetProject,
   useDeleteProject,
   usePreflight,
   useDownloadReport,

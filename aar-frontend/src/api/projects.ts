@@ -119,6 +119,16 @@ export const projectsApi = {
   },
 
   /**
+   * Reset a stuck project (analyzing/queued) back to filesReady
+   */
+  async reset(projectId: string): Promise<Project> {
+    const response = await axiosInstance.post<Project>(
+      `${API_PREFIX}/projects/${projectId}/reset`
+    );
+    return response.data;
+  },
+
+  /**
    * Delete a project
    */
   async delete(projectId: string): Promise<void> {

@@ -131,6 +131,26 @@ export function useStartAnalysis() {
 }
 
 /**
+ * Hook for resetting a stuck project
+ */
+export function useResetProject() {
+  const queryClient = useQueryClient();
+  const { enqueueSnackbar } = useSnackbar();
+
+  return useMutation({
+    mutationFn: (projectId: string) => projectsApi.reset(projectId),
+    onSuccess: (data, projectId) => {
+      queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
+      queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+      enqueueSnackbar('Project reset successfully. You can start analysis again.', { variant: 'success' });
+    },
+    onError: (error: Error) => {
+      enqueueSnackbar(error.message || 'Failed to reset project', { variant: 'error' });
+    },
+  });
+}
+
+/**
  * Hook for deleting a project
  */
 export function useDeleteProject() {

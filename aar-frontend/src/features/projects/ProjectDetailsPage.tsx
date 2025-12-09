@@ -41,17 +41,20 @@ import {
   Warning as WarningIcon,
   Error as ErrorIcon,
   Info as InfoIcon,
+  RestartAlt as ResetIcon,
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card, StatusBadge, SeverityBadge, EmptyState, LoadingScreen } from '../../components';
-import { useProject, useReport, useStartAnalysis } from '../../hooks';
+import { useProject, useReport, useStartAnalysis, useResetProject, useDownloadReport } from '../../hooks';
 import { useSignalR } from '../../hooks/useSignalR';
 import { Finding, Severity, FindingCategory, ProjectStatus } from '../../types';
 
 // Status constants for comparison (handles both string and number formats)
 const isStatusCompleted = (status: ProjectStatus) => status === 'completed' || status === 5;
 const isStatusAnalyzing = (status: ProjectStatus) => status === 'analyzing' || status === 4;
+const isStatusQueued = (status: ProjectStatus) => status === 'queued' || status === 2;
 const isStatusFilesReady = (status: ProjectStatus) => status === 'filesReady' || status === 3;
+const isStatusFailed = (status: ProjectStatus) => status === 'failed' || status === 6;
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -84,6 +87,8 @@ export default function ProjectDetailsPage() {
   const { data: project, isLoading: isLoadingProject, error: projectError, refetch: refetchProject } = useProject(id || '');
   const { data: report, isLoading: isLoadingReport, refetch: refetchReport } = useReport(id || '', { enabled: project?.status ? isStatusCompleted(project.status) : false });
   const { mutate: startAnalysis, isPending: isStarting } = useStartAnalysis();
+  const { mutate: resetProject, isPending: isResetting } = useResetProject();
+  const { mutate: downloadReport, isPending: isDownloading } = useDownloadReport();
 
   // SignalR real-time updates
   const { progress: analysisProgress, isConnected } = useSignalR({
@@ -98,8 +103,11 @@ export default function ProjectDetailsPage() {
 
   // Computed values
   const isAnalyzing = project?.status ? isStatusAnalyzing(project.status) : false;
+  const isQueued = project?.status ? isStatusQueued(project.status) : false;
   const isCompleted = project?.status ? isStatusCompleted(project.status) : false;
+  const isFailed = project?.status ? isStatusFailed(project.status) : false;
   const canStartAnalysis = project?.status ? isStatusFilesReady(project.status) : false;
+  const canReset = isAnalyzing || isQueued || isFailed;
 
   // Group findings by category
   const findingsByCategory = useMemo(() => {
@@ -186,16 +194,20 @@ export default function ProjectDetailsPage() {
     }
   };
 
-  // Handle download report
-  const handleDownloadReport = () => {
-    if (!report) return;
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${project?.name || 'report'}-analysis.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  // Handle download report as PDF
+  const handleDownloadReport = (format: 'pdf' | 'json' = 'pdf') => {
+    if (!id || !project) return;
+    downloadReport({
+      projectId: id,
+      format,
+      projectName: project.name || 'report',
+    });
+  };
+
+  // Handle reset project
+  const handleResetProject = () => {
+    if (!id) return;
+    resetProject(id);
   };
 
   // Loading state
@@ -273,6 +285,19 @@ export default function ProjectDetailsPage() {
               {isStarting ? 'Starting...' : 'Start Analysis'}
             </Button>
           )}
+          {canReset && (
+            <Tooltip title="Reset project to allow re-analysis">
+              <Button
+                variant="outlined"
+                color="warning"
+                startIcon={<ResetIcon />}
+                onClick={handleResetProject}
+                disabled={isResetting}
+              >
+                {isResetting ? 'Resetting...' : 'Reset'}
+              </Button>
+            </Tooltip>
+          )}
           {isCompleted && (
             <>
               <Button
@@ -286,11 +311,12 @@ export default function ProjectDetailsPage() {
                 Refresh
               </Button>
               <Button
-                variant="outlined"
+                variant="contained"
                 startIcon={<DownloadIcon />}
-                onClick={handleDownloadReport}
+                onClick={() => handleDownloadReport('pdf')}
+                disabled={isDownloading}
               >
-                Download
+                {isDownloading ? 'Downloading...' : 'Download PDF'}
               </Button>
             </>
           )}
