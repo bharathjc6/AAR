@@ -74,6 +74,28 @@ public class ApiKey : BaseEntity
     }
 
     /// <summary>
+    /// Creates an API key from a known plain text key (for seeding/testing)
+    /// </summary>
+    public static ApiKey CreateFromPlainText(string plainTextKey, string name, DateTime? expiresAt = null, string scopes = "read,write")
+    {
+        if (string.IsNullOrWhiteSpace(plainTextKey) || !plainTextKey.StartsWith("aar_") || plainTextKey.Length < 12)
+        {
+            throw new ArgumentException("Invalid API key format. Must start with 'aar_' and be at least 12 characters.", nameof(plainTextKey));
+        }
+
+        var keyHash = HashKey(plainTextKey);
+        
+        return new ApiKey
+        {
+            Name = name,
+            KeyHash = keyHash,
+            KeyPrefix = plainTextKey[..8],
+            ExpiresAt = expiresAt,
+            Scopes = scopes
+        };
+    }
+
+    /// <summary>
     /// Validates a plain text key against this API key
     /// </summary>
     public bool ValidateKey(string plainTextKey)

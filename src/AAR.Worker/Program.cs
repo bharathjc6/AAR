@@ -2,6 +2,7 @@ using AAR.Application;
 using AAR.Application.Interfaces;
 using AAR.Application.Services;
 using AAR.Infrastructure;
+using AAR.Infrastructure.KeyVault;
 using AAR.Worker.Agents;
 using Serilog;
 
@@ -26,8 +27,18 @@ try
     
     var builder = Host.CreateApplicationBuilder(args);
     
+    // ==========================================================================
+    // Key Vault Configuration - MUST be added before other configuration
+    // In production, secrets come from Azure Key Vault via Managed Identity.
+    // In development, secrets come from user-secrets or secrets.local.json.
+    // ==========================================================================
+    builder.AddKeyVaultConfiguration();
+    
     // Replace default logging with Serilog
     builder.Services.AddSerilog();
+    
+    // Register Key Vault secret provider for runtime secret access
+    builder.Services.AddKeyVaultSecretProvider(builder.Configuration);
     
     // Register application services
     builder.Services.AddApplicationServices();

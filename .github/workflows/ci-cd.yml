@@ -11,10 +11,32 @@ env:
   REGISTRY: ghcr.io
   API_IMAGE_NAME: ${{ github.repository }}/aar-api
   WORKER_IMAGE_NAME: ${{ github.repository }}/aar-worker
+  # Azure OIDC configuration (set in repository secrets)
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
 jobs:
+  # ==========================================================================
+  # Secret Scanning - Prevents accidental secret commits
+  # ==========================================================================
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Run secret scanner
+      run: |
+        chmod +x scripts/check-no-secrets.sh
+        ./scripts/check-no-secrets.sh
+      continue-on-error: false
+
   build:
     runs-on: ubuntu-latest
+    needs: secret-scan
     
     steps:
     - name: Checkout code
@@ -135,13 +157,32 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: staging
     
+    # Required for OIDC authentication with Azure
+    permissions:
+      contents: read
+      id-token: write
+    
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Azure Login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ env.AZURE_CLIENT_ID }}
+        tenant-id: ${{ env.AZURE_TENANT_ID }}
+        subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+    
     - name: Deploy to staging
       run: |
         echo "Deploying to staging environment..."
-        # Add deployment commands here (e.g., Azure CLI, kubectl, etc.)
-        # az webapp config container set ...
-        # kubectl apply -f k8s/staging/
+        # Deploy using Azure CLI - secrets come from Key Vault via Managed Identity
+        # az webapp config container set \
+        #   --resource-group rg-aar-staging \
+        #   --name aar-api-staging \
+        #   --docker-custom-image-name ${{ env.REGISTRY }}/${{ env.API_IMAGE_NAME }}:latest
+        # az webapp restart --resource-group rg-aar-staging --name aar-api-staging
+        echo "Note: Application retrieves secrets from Azure Key Vault at runtime"
 
   deploy-production:
     runs-on: ubuntu-latest
@@ -149,10 +190,29 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: production
     
+    # Required for OIDC authentication with Azure
+    permissions:
+      contents: read
+      id-token: write
+    
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Azure Login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ env.AZURE_CLIENT_ID }}
+        tenant-id: ${{ env.AZURE_TENANT_ID }}
+        subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+    
     - name: Deploy to production
       run: |
         echo "Deploying to production environment..."
-        # Add production deployment commands here
-        # az webapp config container set ...
-        # kubectl apply -f k8s/production/
+        # Deploy using Azure CLI - secrets come from Key Vault via Managed Identity
+        # az webapp config container set \
+        #   --resource-group rg-aar-prod \
+        #   --name aar-api-prod \
+        #   --docker-custom-image-name ${{ env.REGISTRY }}/${{ env.API_IMAGE_NAME }}:latest
+        # az webapp restart --resource-group rg-aar-prod --name aar-api-prod
+        echo "Note: Application retrieves secrets from Azure Key Vault at runtime"

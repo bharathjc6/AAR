@@ -6,7 +6,7 @@
 
 # Configuration
 $BaseUrl = "http://localhost:5000"
-$ApiKey = "aar_vRk9ZqgyOFXy4NFoxbbRE32EOuhmE8WD"  # Development key (generated on first run)
+$ApiKey = "vRk9ZqgyOFXy4NFoxbbRE32EOuhmE8WD"  # Development key (generated on first run)
 
 # Headers for authenticated requests
 $Headers = @{

@@ -137,20 +137,30 @@ public class ProjectService : IProjectService
                 var zipPath = Path.Combine(Path.GetTempPath(), "aar", $"{project.Id}.zip");
                 System.IO.Compression.ZipFile.CreateFromDirectory(tempPath, zipPath);
 
-                await using var zipStream = File.OpenRead(zipPath);
                 var storagePath = $"{project.Id}/repo.zip";
                 
-                await _blobStorage.UploadAsync(
-                    ProjectsContainer,
-                    storagePath,
-                    zipStream,
-                    "application/zip",
-                    cancellationToken);
+                // Use a proper using block to ensure the stream is disposed before delete
+                await using (var zipStream = File.OpenRead(zipPath))
+                {
+                    await _blobStorage.UploadAsync(
+                        ProjectsContainer,
+                        storagePath,
+                        zipStream,
+                        "application/zip",
+                        cancellationToken);
+                }
 
                 project.SetStoragePath(storagePath);
 
-                // Cleanup
-                File.Delete(zipPath);
+                // Cleanup - now safe to delete since stream is closed
+                try
+                {
+                    File.Delete(zipPath);
+                }
+                catch (IOException)
+                {
+                    // Best effort cleanup - file will be cleaned up by OS later
+                }
             }
             finally
             {

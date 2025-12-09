@@ -67,10 +67,12 @@ ehthumbs.db
 *.key
 *.pem
 secrets.json
+secrets.local.json
 appsettings.*.local.json
 .env
 .env.*
 !.env.example
+!secrets.local.json.template
 
 # Local storage
 storage/

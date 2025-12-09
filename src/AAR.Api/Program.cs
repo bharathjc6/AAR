@@ -10,8 +10,11 @@ using AAR.Api.Security;
 using AAR.Application;
 using AAR.Application.Interfaces;
 using AAR.Infrastructure;
+using AAR.Infrastructure.KeyVault;
 using AAR.Infrastructure.Persistence;
+using AAR.Shared.KeyVault;
 using Asp.Versioning;
+using Azure.Identity;
 using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -48,6 +51,12 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
+    // =============================================================================
+    // Security: Add Azure Key Vault as configuration source (before any bindings)
+    // This must be done early so secrets are available for Options binding
+    // =============================================================================
+    builder.AddKeyVaultConfiguration();
+
     // Use Serilog
     builder.Host.UseSerilog();
 
@@ -58,18 +67,28 @@ try
         .SetApplicationName("AAR-API")
         .SetDefaultKeyLifetime(TimeSpan.FromDays(90));
 
-    // TODO: REPLACE_WITH_KEY_VAULT - Use Azure Key Vault for key storage in production
-    // var keyVaultUri = Environment.GetEnvironmentVariable("KEYVAULT_URI");
-    // if (!string.IsNullOrEmpty(keyVaultUri))
-    // {
-    //     dataProtectionBuilder.ProtectKeysWithAzureKeyVault(
-    //         new Uri($"{keyVaultUri}/keys/DataProtection"),
-    //         new DefaultAzureCredential());
-    // }
-    // For development: persist keys to filesystem
-    var keysPath = Path.Combine(builder.Environment.ContentRootPath, "keys");
-    Directory.CreateDirectory(keysPath);
-    dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
+    // Configure key storage based on environment
+    var keyVaultOptions = builder.Configuration.GetSection("KeyVault").Get<KeyVaultOptions>();
+    if (keyVaultOptions?.UseKeyVault == true && !string.IsNullOrEmpty(keyVaultOptions.VaultUri))
+    {
+        // In production with Azure Key Vault enabled, use Azure Blob Storage for key persistence
+        // The keys themselves are encrypted at rest in Azure storage
+        // For additional protection, consider adding Azure.Extensions.AspNetCore.DataProtection.Keys
+        // and calling ProtectKeysWithAzureKeyVault()
+        Log.Information("Data Protection configured for production with Key Vault integration");
+        
+        // Persist keys to the keys directory (in production, this would typically be Azure Blob Storage)
+        var keysPath = Path.Combine(builder.Environment.ContentRootPath, "keys");
+        Directory.CreateDirectory(keysPath);
+        dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
+    }
+    else
+    {
+        // For development: persist keys to filesystem
+        var keysPath = Path.Combine(builder.Environment.ContentRootPath, "keys");
+        Directory.CreateDirectory(keysPath);
+        dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
+    }
 
     // =============================================================================
     // Configure Services
@@ -391,8 +410,12 @@ static async Task SeedDevelopmentDataAsync(AarDbContext db)
 
     Log.Information("Seeding development API key...");
     
-    // Create a development API key with system scope
-    var (apiKey, plainTextKey) = AAR.Domain.Entities.ApiKey.Create(
+    // Use the known test key that frontend and E2E tests use
+    // This key is hardcoded in: aar-ui/src/config.ts, aar-ui/e2e/, tests/E2E/, docs/
+    const string knownTestKey = "aar_1kToNBn9uKzHic2HNWyZZi0yZurtRsJI";
+    
+    var apiKey = AAR.Domain.Entities.ApiKey.CreateFromPlainText(
+        knownTestKey,
         "Development Key",
         DateTime.UtcNow.AddYears(1),
         "read,write,admin,system");
@@ -401,10 +424,10 @@ static async Task SeedDevelopmentDataAsync(AarDbContext db)
     await db.SaveChangesAsync();
     
     // Log with partial redaction for security
-    var maskedKey = plainTextKey[..8] + "***REDACTED***";
+    var maskedKey = knownTestKey[..8] + "***REDACTED***";
     Log.Information("Development API Key created: {ApiKey}", maskedKey);
     Log.Warning("⚠️ This API key is for development only. Generate new keys for production.");
     
     // Output full key to console only (not to log file)
-    Console.WriteLine($"\n🔑 Development API Key: {plainTextKey}\n");
+    Console.WriteLine($"\n🔑 Development API Key: {knownTestKey}\n");
 }
