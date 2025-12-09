@@ -164,7 +164,7 @@ public class AarDbContext : DbContext
             entity.Property(e => e.EmbeddingJson).HasMaxLength(50000);
 
             entity.HasIndex(e => e.ProjectId);
-            entity.HasIndex(e => e.ChunkHash).IsUnique();
+            entity.HasIndex(e => new { e.ProjectId, e.ChunkHash }).IsUnique(); // Unique per project
             entity.HasIndex(e => new { e.ProjectId, e.FilePath });
 
             entity.HasOne(e => e.Project)

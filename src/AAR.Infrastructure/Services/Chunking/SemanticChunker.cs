@@ -353,7 +353,8 @@ public class SemanticChunker : IChunker
         string? semanticName = null)
     {
         var textHash = ComputeHash(content);
-        var chunkHash = ComputeHash($"{filePath}:{startLine}:{endLine}:{textHash}");
+        // Include projectId in hash to ensure uniqueness across projects
+        var chunkHash = ComputeHash($"{projectId}:{filePath}:{startLine}:{endLine}:{textHash}");
 
         return new ChunkInfo
         {
