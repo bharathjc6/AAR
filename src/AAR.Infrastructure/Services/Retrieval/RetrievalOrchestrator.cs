@@ -136,6 +136,10 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
         };
     }
 
+    // Batch size for processing large projects
+    private const int ChunkBatchSize = 100;
+    private const int FileBatchSize = 50;
+
     /// <inheritdoc/>
     public async Task<IndexingResult> IndexProjectAsync(
         Guid projectId,
@@ -144,6 +148,9 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
     {
         var stopwatch = Stopwatch.StartNew();
         var errors = new List<string>();
+        var totalChunksCreated = 0;
+        var totalEmbeddingsGenerated = 0;
+        var totalTokens = 0;
         
         _logger.LogInformation("Indexing {FileCount} files for project {ProjectId}", files.Count, projectId);
 
@@ -152,86 +159,123 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
         await _chunkRepository.DeleteByProjectIdAsync(projectId, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Chunk all files
-        var chunks = await _chunker.ChunkFilesAsync(files, projectId, cancellationToken);
-        
-        if (chunks.Count == 0)
+        // Process files in batches to avoid memory issues
+        var fileList = files.ToList();
+        var fileBatches = fileList.Chunk(FileBatchSize).ToList();
+        var batchNumber = 0;
+
+        foreach (var fileBatch in fileBatches)
         {
-            _logger.LogWarning("No chunks created for project {ProjectId}", projectId);
-            return new IndexingResult
+            batchNumber++;
+            cancellationToken.ThrowIfCancellationRequested();
+            
+            _logger.LogInformation(
+                "Processing file batch {BatchNumber}/{TotalBatches} ({FileCount} files) for project {ProjectId}",
+                batchNumber, fileBatches.Count, fileBatch.Length, projectId);
+
+            // Chunk this batch of files
+            var batchFiles = fileBatch.ToDictionary(f => f.Key, f => f.Value);
+            var chunks = await _chunker.ChunkFilesAsync(batchFiles, projectId, cancellationToken);
+            
+            if (chunks.Count == 0)
             {
-                FilesProcessed = files.Count,
-                ChunksCreated = 0,
-                EmbeddingsGenerated = 0,
-                TotalTokens = 0,
-                IndexingTimeMs = stopwatch.ElapsedMilliseconds
-            };
-        }
+                _logger.LogDebug("No chunks created for batch {BatchNumber}", batchNumber);
+                continue;
+            }
 
-        // Generate embeddings in batches
-        var chunkContents = chunks.Select(c => c.Content).ToList();
-        var embeddings = await _embeddingService.CreateEmbeddingsAsync(chunkContents, cancellationToken);
+            _logger.LogInformation("Created {ChunkCount} chunks from batch {BatchNumber}", chunks.Count, batchNumber);
 
-        // Save chunks to database and index in vector store
-        var vectorBatch = new List<(string, float[], VectorMetadata)>();
-        var dbChunks = new List<Chunk>();
+            // Process chunks in smaller batches for embeddings and DB
+            var chunkBatches = chunks.Chunk(ChunkBatchSize).ToList();
+            var chunkBatchNumber = 0;
 
-        for (var i = 0; i < chunks.Count; i++)
-        {
-            var chunk = chunks[i];
-            var embedding = embeddings[i];
-
-            var dbChunk = Chunk.Create(
-                projectId: chunk.ProjectId,
-                filePath: chunk.FilePath,
-                startLine: chunk.StartLine,
-                endLine: chunk.EndLine,
-                tokenCount: chunk.TokenCount,
-                language: chunk.Language,
-                textHash: chunk.TextHash,
-                chunkHash: chunk.ChunkHash,
-                semanticType: chunk.SemanticType,
-                semanticName: chunk.SemanticName,
-                content: _chunkerOptions.StoreChunkText ? chunk.Content : null);
-
-            dbChunk.SetEmbedding(embedding, _embeddingService.ModelName);
-            dbChunks.Add(dbChunk);
-
-            var metadata = new VectorMetadata
+            foreach (var chunkBatch in chunkBatches)
             {
-                ProjectId = chunk.ProjectId,
-                FilePath = chunk.FilePath,
-                StartLine = chunk.StartLine,
-                EndLine = chunk.EndLine,
-                Language = chunk.Language,
-                SemanticType = chunk.SemanticType,
-                SemanticName = chunk.SemanticName,
-                TokenCount = chunk.TokenCount,
-                Content = chunk.Content
-            };
+                chunkBatchNumber++;
+                cancellationToken.ThrowIfCancellationRequested();
 
-            vectorBatch.Add((chunk.ChunkHash, embedding, metadata));
+                var chunkList = chunkBatch.ToList();
+                
+                // Generate embeddings for this batch
+                var chunkContents = chunkList.Select(c => c.Content).ToList();
+                var embeddings = await _embeddingService.CreateEmbeddingsAsync(chunkContents, cancellationToken);
+
+                // Prepare database entities and vector data
+                var vectorBatch = new List<(string, float[], VectorMetadata)>();
+                var dbChunks = new List<Chunk>();
+
+                for (var i = 0; i < chunkList.Count; i++)
+                {
+                    var chunk = chunkList[i];
+                    var embedding = embeddings[i];
+
+                    var dbChunk = Chunk.Create(
+                        projectId: chunk.ProjectId,
+                        filePath: chunk.FilePath,
+                        startLine: chunk.StartLine,
+                        endLine: chunk.EndLine,
+                        tokenCount: chunk.TokenCount,
+                        language: chunk.Language,
+                        textHash: chunk.TextHash,
+                        chunkHash: chunk.ChunkHash,
+                        semanticType: chunk.SemanticType,
+                        semanticName: chunk.SemanticName,
+                        content: _chunkerOptions.StoreChunkText ? chunk.Content : null);
+
+                    dbChunk.SetEmbedding(embedding, _embeddingService.ModelName);
+                    dbChunks.Add(dbChunk);
+
+                    var metadata = new VectorMetadata
+                    {
+                        ProjectId = chunk.ProjectId,
+                        FilePath = chunk.FilePath,
+                        StartLine = chunk.StartLine,
+                        EndLine = chunk.EndLine,
+                        Language = chunk.Language,
+                        SemanticType = chunk.SemanticType,
+                        SemanticName = chunk.SemanticName,
+                        TokenCount = chunk.TokenCount,
+                        Content = chunk.Content
+                    };
+
+                    vectorBatch.Add((chunk.ChunkHash, embedding, metadata));
+                    totalTokens += chunk.TokenCount;
+                }
+
+                // Save batch to database
+                await _chunkRepository.AddRangeAsync(dbChunks, cancellationToken);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+                // Index batch in vector store
+                await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
+
+                totalChunksCreated += dbChunks.Count;
+                totalEmbeddingsGenerated += embeddings.Count;
+
+                _logger.LogDebug(
+                    "Saved chunk batch {ChunkBatch}/{TotalChunkBatches} ({Count} chunks)",
+                    chunkBatchNumber, chunkBatches.Count, dbChunks.Count);
+            }
         }
-
-        // Save to database
-        await _chunkRepository.AddRangeAsync(dbChunks, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        // Index in vector store
-        await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
 
         stopwatch.Stop();
-        var totalTokens = chunks.Sum(c => c.TokenCount);
 
-        _logger.LogInformation(
-            "Indexed {ChunkCount} chunks ({TotalTokens} tokens) for project {ProjectId} in {Time}ms",
-            chunks.Count, totalTokens, projectId, stopwatch.ElapsedMilliseconds);
+        if (totalChunksCreated == 0)
+        {
+            _logger.LogWarning("No chunks created for project {ProjectId}", projectId);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Indexed {ChunkCount} chunks ({TotalTokens} tokens) for project {ProjectId} in {Time}ms",
+                totalChunksCreated, totalTokens, projectId, stopwatch.ElapsedMilliseconds);
+        }
 
         return new IndexingResult
         {
             FilesProcessed = files.Count,
-            ChunksCreated = chunks.Count,
-            EmbeddingsGenerated = embeddings.Count,
+            ChunksCreated = totalChunksCreated,
+            EmbeddingsGenerated = totalEmbeddingsGenerated,
             TotalTokens = totalTokens,
             IndexingTimeMs = stopwatch.ElapsedMilliseconds,
             Errors = errors.Count > 0 ? errors : null
@@ -246,114 +290,142 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
     {
         var stopwatch = Stopwatch.StartNew();
         var errors = new List<string>();
-        var chunksSkipped = 0;
+        var totalChunksSkipped = 0;
+        var totalChunksCreated = 0;
+        var totalEmbeddingsGenerated = 0;
+        var totalTokens = 0;
         
         _logger.LogInformation("Incremental indexing {FileCount} files for project {ProjectId}", 
             files.Count, projectId);
 
-        var newChunks = new List<ChunkInfo>();
-        var existingHashes = new HashSet<string>();
-
         // Get existing chunk hashes
+        var existingHashes = new HashSet<string>();
         var existingChunks = await _chunkRepository.GetByProjectIdAsync(projectId, cancellationToken);
         foreach (var chunk in existingChunks)
         {
             existingHashes.Add(chunk.ChunkHash);
         }
 
-        // Chunk all files and filter out existing
-        var allChunks = await _chunker.ChunkFilesAsync(files, projectId, cancellationToken);
-        
-        foreach (var chunk in allChunks)
+        _logger.LogInformation("Found {ExistingCount} existing chunks for project {ProjectId}", 
+            existingHashes.Count, projectId);
+
+        // Process files in batches
+        var fileList = files.ToList();
+        var fileBatches = fileList.Chunk(FileBatchSize).ToList();
+        var batchNumber = 0;
+
+        foreach (var fileBatch in fileBatches)
         {
-            if (existingHashes.Contains(chunk.ChunkHash))
+            batchNumber++;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            _logger.LogInformation(
+                "Processing incremental batch {BatchNumber}/{TotalBatches} ({FileCount} files)",
+                batchNumber, fileBatches.Count, fileBatch.Length);
+
+            // Chunk this batch of files
+            var batchFiles = fileBatch.ToDictionary(f => f.Key, f => f.Value);
+            var allChunks = await _chunker.ChunkFilesAsync(batchFiles, projectId, cancellationToken);
+
+            // Filter out existing chunks
+            var newChunks = new List<ChunkInfo>();
+            foreach (var chunk in allChunks)
             {
-                chunksSkipped++;
+                if (existingHashes.Contains(chunk.ChunkHash))
+                {
+                    totalChunksSkipped++;
+                }
+                else
+                {
+                    newChunks.Add(chunk);
+                    existingHashes.Add(chunk.ChunkHash); // Track to avoid duplicates within batches
+                }
             }
-            else
+
+            if (newChunks.Count == 0)
             {
-                newChunks.Add(chunk);
+                _logger.LogDebug("No new chunks in batch {BatchNumber}", batchNumber);
+                continue;
+            }
+
+            // Process new chunks in smaller batches
+            var chunkBatches = newChunks.Chunk(ChunkBatchSize).ToList();
+
+            foreach (var chunkBatch in chunkBatches)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var chunkList = chunkBatch.ToList();
+
+                // Generate embeddings for this batch
+                var chunkContents = chunkList.Select(c => c.Content).ToList();
+                var embeddings = await _embeddingService.CreateEmbeddingsAsync(chunkContents, cancellationToken);
+
+                // Prepare database entities and vector data
+                var vectorBatch = new List<(string, float[], VectorMetadata)>();
+                var dbChunks = new List<Chunk>();
+
+                for (var i = 0; i < chunkList.Count; i++)
+                {
+                    var chunk = chunkList[i];
+                    var embedding = embeddings[i];
+
+                    var dbChunk = Chunk.Create(
+                        projectId: chunk.ProjectId,
+                        filePath: chunk.FilePath,
+                        startLine: chunk.StartLine,
+                        endLine: chunk.EndLine,
+                        tokenCount: chunk.TokenCount,
+                        language: chunk.Language,
+                        textHash: chunk.TextHash,
+                        chunkHash: chunk.ChunkHash,
+                        semanticType: chunk.SemanticType,
+                        semanticName: chunk.SemanticName,
+                        content: _chunkerOptions.StoreChunkText ? chunk.Content : null);
+
+                    dbChunk.SetEmbedding(embedding, _embeddingService.ModelName);
+                    dbChunks.Add(dbChunk);
+
+                    var metadata = new VectorMetadata
+                    {
+                        ProjectId = chunk.ProjectId,
+                        FilePath = chunk.FilePath,
+                        StartLine = chunk.StartLine,
+                        EndLine = chunk.EndLine,
+                        Language = chunk.Language,
+                        SemanticType = chunk.SemanticType,
+                        SemanticName = chunk.SemanticName,
+                        TokenCount = chunk.TokenCount,
+                        Content = chunk.Content
+                    };
+
+                    vectorBatch.Add((chunk.ChunkHash, embedding, metadata));
+                    totalTokens += chunk.TokenCount;
+                }
+
+                // Save batch to database
+                await _chunkRepository.AddRangeAsync(dbChunks, cancellationToken);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+                await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
+
+                totalChunksCreated += dbChunks.Count;
+                totalEmbeddingsGenerated += embeddings.Count;
             }
         }
-
-        if (newChunks.Count == 0)
-        {
-            _logger.LogInformation("No new chunks to index for project {ProjectId}", projectId);
-            return new IndexingResult
-            {
-                FilesProcessed = files.Count,
-                ChunksCreated = 0,
-                EmbeddingsGenerated = 0,
-                TotalTokens = 0,
-                IndexingTimeMs = stopwatch.ElapsedMilliseconds,
-                ChunksSkipped = chunksSkipped
-            };
-        }
-
-        // Generate embeddings for new chunks
-        var chunkContents = newChunks.Select(c => c.Content).ToList();
-        var embeddings = await _embeddingService.CreateEmbeddingsAsync(chunkContents, cancellationToken);
-
-        // Save new chunks
-        var vectorBatch = new List<(string, float[], VectorMetadata)>();
-        var dbChunks = new List<Chunk>();
-
-        for (var i = 0; i < newChunks.Count; i++)
-        {
-            var chunk = newChunks[i];
-            var embedding = embeddings[i];
-
-            var dbChunk = Chunk.Create(
-                projectId: chunk.ProjectId,
-                filePath: chunk.FilePath,
-                startLine: chunk.StartLine,
-                endLine: chunk.EndLine,
-                tokenCount: chunk.TokenCount,
-                language: chunk.Language,
-                textHash: chunk.TextHash,
-                chunkHash: chunk.ChunkHash,
-                semanticType: chunk.SemanticType,
-                semanticName: chunk.SemanticName,
-                content: _chunkerOptions.StoreChunkText ? chunk.Content : null);
-
-            dbChunk.SetEmbedding(embedding, _embeddingService.ModelName);
-            dbChunks.Add(dbChunk);
-
-            var metadata = new VectorMetadata
-            {
-                ProjectId = chunk.ProjectId,
-                FilePath = chunk.FilePath,
-                StartLine = chunk.StartLine,
-                EndLine = chunk.EndLine,
-                Language = chunk.Language,
-                SemanticType = chunk.SemanticType,
-                SemanticName = chunk.SemanticName,
-                TokenCount = chunk.TokenCount,
-                Content = chunk.Content
-            };
-
-            vectorBatch.Add((chunk.ChunkHash, embedding, metadata));
-        }
-
-        await _chunkRepository.AddRangeAsync(dbChunks, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-        await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
 
         stopwatch.Stop();
-        var totalTokens = newChunks.Sum(c => c.TokenCount);
 
         _logger.LogInformation(
-            "Incrementally indexed {ChunkCount} new chunks, skipped {Skipped} for project {ProjectId}",
-            newChunks.Count, chunksSkipped, projectId);
+            "Incrementally indexed {ChunkCount} new chunks, skipped {Skipped} for project {ProjectId} in {Time}ms",
+            totalChunksCreated, totalChunksSkipped, projectId, stopwatch.ElapsedMilliseconds);
 
         return new IndexingResult
         {
             FilesProcessed = files.Count,
-            ChunksCreated = newChunks.Count,
-            EmbeddingsGenerated = embeddings.Count,
+            ChunksCreated = totalChunksCreated,
+            EmbeddingsGenerated = totalEmbeddingsGenerated,
             TotalTokens = totalTokens,
             IndexingTimeMs = stopwatch.ElapsedMilliseconds,
-            ChunksSkipped = chunksSkipped,
+            ChunksSkipped = totalChunksSkipped,
             Errors = errors.Count > 0 ? errors : null
         };
     }
