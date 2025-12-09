@@ -2,7 +2,8 @@ import { defineConfig } from 'cypress';
 
 export default defineConfig({
   e2e: {
-    baseUrl: 'http://localhost:5173',
+    // Use port 3000 to match vite dev server and serve:preview
+    baseUrl: 'http://localhost:3000',
     specPattern: 'cypress/e2e/**/*.cy.{js,jsx,ts,tsx}',
     supportFile: 'cypress/support/e2e.ts',
     viewportWidth: 1280,
@@ -18,6 +19,8 @@ export default defineConfig({
     },
     env: {
       apiUrl: 'http://localhost:5000/api/v1',
+      // Set to true to use mocked API responses
+      mockMode: process.env.VITE_MOCK_MODE === 'true',
     },
   },
   component: {

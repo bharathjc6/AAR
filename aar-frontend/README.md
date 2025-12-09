@@ -4,7 +4,7 @@ A modern, production-ready React frontend for the Automated Architecture Review 
 
 ## Features
 
-- 🎨 **Modern UI** - Built with MUI 6 and Framer Motion animations
+- 🎨 **Modern UI** - Built with MUI 5 and Framer Motion animations
 - 🌙 **Dark/Light Mode** - Full theme support with system preference detection
 - 📊 **Dashboard** - Real-time metrics and project overview
 - 📁 **Project Management** - Create, view, and manage projects
@@ -18,7 +18,7 @@ A modern, production-ready React frontend for the Automated Architecture Review 
 
 - **Framework**: React 18 + TypeScript
 - **Build Tool**: Vite 5
-- **UI Library**: MUI 6 + Emotion
+- **UI Library**: MUI 5 + Emotion
 - **State Management**: TanStack React Query 5 + Zustand
 - **Real-time**: Microsoft SignalR 8
 - **Animations**: Framer Motion 11
@@ -30,31 +30,68 @@ A modern, production-ready React frontend for the Automated Architecture Review 
 
 ### Prerequisites
 
-- Node.js 20+
-- npm 10+
-- AAR API server running on `http://localhost:5000`
+- **Node.js 18+** (LTS recommended)
+- npm 9+
+- AAR API server running on `http://localhost:5000` (optional for mock mode)
+
+### Node.js Version Setup
+
+We use Node.js 18 LTS. Here's how to set it up:
+
+**macOS/Linux (using nvm):**
+```bash
+# Install nvm if not installed
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+
+# Install and use Node 18
+nvm install 18
+nvm use 18
+
+# Verify
+node --version  # Should show v18.x.x
+```
+
+**Windows (using nvm-windows):**
+```powershell
+# Install nvm-windows from: https://github.com/coreybutler/nvm-windows/releases
+# Then run in PowerShell as Administrator:
+nvm install 18
+nvm use 18
+
+# Verify
+node --version  # Should show v18.x.x
+```
+
+**Automatic version switching:**
+The project includes `.nvmrc` file. If you have nvm configured for auto-switching:
+```bash
+cd aar-frontend
+nvm use  # Automatically uses version from .nvmrc
+```
 
 ### Installation
 
 ```bash
 # Install dependencies
-npm install
+npm ci
 
 # Copy environment template
-cp .env.example .env
+cp .env.example .env.local
 
 # Start development server
 npm run dev
 ```
 
-The app will be available at `http://localhost:5173`
+The app will be available at `http://localhost:3000`
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VITE_API_URL` | Backend API base URL | `http://localhost:5000/api/v1` |
-| `VITE_SIGNALR_HUB_URL` | SignalR hub URL | `http://localhost:5000/hubs/analysis` |
+| `VITE_API_BASE_URL` | Backend API base URL | `http://localhost:5000` |
+| `VITE_SIGNALR_HUB_URL` | SignalR hub URL | (derived from API_BASE_URL) |
+| `VITE_PUBLIC_PATH` | Public path for subpath deployments | `/` |
+| `VITE_MOCK_MODE` | Enable mock mode (no backend required) | `false` |
 
 ## Scripts
 

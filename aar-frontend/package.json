@@ -6,7 +6,7 @@
   "description": "Automated Architecture Review - Frontend Application",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint src --ext ts,tsx --fix",
@@ -17,7 +17,9 @@
     "test:coverage": "vitest run --coverage",
     "test:ci": "vitest run --coverage --reporter=default --reporter=junit --outputFile=./test-results/junit.xml",
     "test:e2e": "cypress run",
-    "test:e2e:open": "cypress open"
+    "test:e2e:open": "cypress open",
+    "test:e2e:mock": "cross-env VITE_MOCK_MODE=true cypress run",
+    "serve:preview": "npx serve -s dist -p 3000"
   },
   "dependencies": {
     "@emotion/react": "^11.13.5",
@@ -53,6 +55,7 @@
     "@typescript-eslint/parser": "^7.18.0",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^2.1.8",
+    "cross-env": "^7.0.3",
     "cypress": "^13.16.1",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^9.1.0",
@@ -62,11 +65,12 @@
     "jsdom": "^25.0.1",
     "msw": "^2.6.8",
     "prettier": "^3.4.2",
+    "serve": "^14.2.4",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18"
   }
 }
