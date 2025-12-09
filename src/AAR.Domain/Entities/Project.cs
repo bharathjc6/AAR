@@ -172,6 +172,21 @@ public class Project : BaseEntity
     }
 
     /// <summary>
+    /// Resets a stuck analysis so it can be re-run
+    /// </summary>
+    public void ResetAnalysis()
+    {
+        if (Status != ProjectStatus.Analyzing && Status != ProjectStatus.Queued)
+            throw new InvalidOperationException("Can only reset projects that are stuck in Analyzing or Queued status");
+        
+        Status = ProjectStatus.FilesReady;
+        AnalysisStartedAt = null;
+        AnalysisCompletedAt = null;
+        ErrorMessage = null;
+        SetUpdated();
+    }
+
+    /// <summary>
     /// Sets the API key that owns this project
     /// </summary>
     public void SetApiKey(Guid apiKeyId)

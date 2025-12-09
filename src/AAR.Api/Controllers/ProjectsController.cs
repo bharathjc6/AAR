@@ -195,6 +195,29 @@ public class ProjectsController : ControllerBase
                 : BadRequest(new ErrorResponse { Error = error, TraceId = HttpContext.TraceIdentifier }));
     }
 
+    /// <summary>
+    /// Resets a stuck analysis so it can be re-run
+    /// </summary>
+    /// <param name="id">Project ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Updated project status</returns>
+    [HttpPost("{id:guid}/reset")]
+    [ProducesResponseType(typeof(ProjectDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ResetAnalysis(Guid id, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Resetting analysis for project: {ProjectId}", id);
+        
+        var result = await _projectService.ResetAnalysisAsync(id, cancellationToken);
+
+        return result.Match<IActionResult>(
+            project => Ok(project),
+            error => error.Code.Contains("NotFound") 
+                ? NotFound(new ErrorResponse { Error = error, TraceId = HttpContext.TraceIdentifier })
+                : BadRequest(new ErrorResponse { Error = error, TraceId = HttpContext.TraceIdentifier }));
+    }
+
     private Guid? GetApiKeyId()
     {
         return HttpContext.Items.TryGetValue("ApiKeyId", out var id) && id is Guid guidId 

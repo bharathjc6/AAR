@@ -258,6 +258,42 @@ public class ProjectService : IProjectService
     }
 
     /// <inheritdoc/>
+    public async Task<Result<ProjectDetailDto>> ResetAnalysisAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _logger.LogInformation("Resetting analysis for project: {ProjectId}", projectId);
+
+            var project = await _unitOfWork.Projects.GetByIdAsync(projectId, cancellationToken);
+            
+            if (project is null)
+            {
+                return DomainErrors.Project.NotFound(projectId);
+            }
+
+            if (project.Status != ProjectStatus.Analyzing && project.Status != ProjectStatus.Queued)
+            {
+                return new Error("Project.CannotReset", "Can only reset projects that are stuck in Analyzing or Queued status");
+            }
+
+            project.ResetAnalysis();
+            await _unitOfWork.Projects.UpdateAsync(project, cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Successfully reset analysis for project: {ProjectId}", projectId);
+
+            return MapToDetailDto(project);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resetting analysis for project: {ProjectId}", projectId);
+            throw;
+        }
+    }
+
+    /// <inheritdoc/>
     public async Task<Result<ProjectDetailDto>> GetProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default)
@@ -347,6 +383,10 @@ public interface IProjectService
         CancellationToken cancellationToken = default);
 
     Task<Result<StartAnalysisResponse>> StartAnalysisAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<ProjectDetailDto>> ResetAnalysisAsync(
         Guid projectId,
         CancellationToken cancellationToken = default);
 
