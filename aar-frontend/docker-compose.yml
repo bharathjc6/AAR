@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  aar-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aar-frontend:latest
+    container_name: aar-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - API_URL=http://aar-api:5000
+    networks:
+      - aar-network
+    depends_on:
+      - aar-api
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # This references the API from the parent docker-compose
+  # In production, you would either extend the parent compose file
+  # or configure the API_URL to point to your API server
+
+networks:
+  aar-network:
+    external: true
