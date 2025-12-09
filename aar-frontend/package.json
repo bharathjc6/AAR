@@ -19,6 +19,10 @@
     "test:e2e": "cypress run",
     "test:e2e:open": "cypress open",
     "test:e2e:mock": "cross-env VITE_MOCK_MODE=true cypress run",
+    "test:e2e:playwright": "playwright test",
+    "test:e2e:playwright:ui": "playwright test --ui",
+    "test:e2e:playwright:headed": "playwright test --headed",
+    "test:e2e:playwright:report": "playwright show-report",
     "serve:preview": "npx serve -s dist -p 3000"
   },
   "dependencies": {
@@ -44,6 +48,7 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.1",
     "@testing-library/user-event": "^14.5.2",

@@ -1,0 +1,139 @@
+# =============================================================================
+# docker-compose.e2e.yml
+# Docker Compose configuration for E2E testing
+# Spins up: Backend API, Worker, Frontend, and required infrastructure
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # Infrastructure Services
+  # ==========================================================================
+  
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: aar-e2e-sql
+    environment:
+      SA_PASSWORD: "E2E_Test_Password123!"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "E2E_Test_Password123!" -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - sqldata:/var/opt/mssql
+
+  # ==========================================================================
+  # Backend Services
+  # ==========================================================================
+  
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: aar-e2e-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      ASPNETCORE_URLS: "http://+:5000"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=AAR_E2E;User Id=sa;Password=E2E_Test_Password123!;TrustServerCertificate=true"
+      # Enable integrated mode (API + Worker in same process for E2E)
+      AAR_INTEGRATED_MODE: "true"
+      # Mock external services for E2E
+      OPENAI_API_KEY: "mock-api-key-for-e2e"
+      USE_MOCK_OPENAI: "true"
+      # CORS
+      ALLOWED_ORIGINS: "http://localhost:3000,http://frontend:80"
+      # Rate limiting (relaxed for E2E)
+      RateLimiting__GlobalRequestsPerMinute: "1000"
+      RateLimiting__ApiKeyRequestsPerMinute: "1000"
+      RateLimiting__UploadRequestsPerHour: "100"
+    ports:
+      - "5000:5000"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - api-storage:/app/storage
+      - api-keys:/app/keys
+
+  # ==========================================================================
+  # Frontend Service (built and served via nginx)
+  # ==========================================================================
+  
+  frontend:
+    build:
+      context: ./aar-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: "http://localhost:5000"
+        VITE_PUBLIC_PATH: "/"
+    container_name: aar-e2e-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # E2E Test Runner (Playwright)
+  # ==========================================================================
+  
+  e2e-runner:
+    image: mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: aar-e2e-runner
+    working_dir: /app
+    environment:
+      PLAYWRIGHT_BASE_URL: "http://frontend:80"
+      VITE_API_BASE_URL: "http://api:5000"
+      AAR_API_KEY: "aar_1kToNBn9uKzHic2HNWyZZi0yZurtRsJI"
+      CI: "true"
+    volumes:
+      - ./aar-frontend:/app
+      - playwright-cache:/root/.cache/ms-playwright
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: npx playwright test --reporter=html
+    profiles:
+      - e2e
+
+# =============================================================================
+# Volumes
+# =============================================================================
+
+volumes:
+  sqldata:
+    name: aar-e2e-sqldata
+  api-storage:
+    name: aar-e2e-storage
+  api-keys:
+    name: aar-e2e-keys
+  playwright-cache:
+    name: aar-e2e-playwright
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+networks:
+  default:
+    name: aar-e2e-network

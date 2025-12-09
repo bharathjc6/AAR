@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import { ErrorResponse } from '../types';
+import { logApiRequest } from '../hooks/useApiLogger';
 
 // Get base URL from environment variable
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
@@ -48,6 +49,11 @@ axiosInstance.interceptors.request.use(
       config.headers['X-Api-Key'] = apiKey;
     }
 
+    // Add request start time for duration tracking
+    (config as InternalAxiosRequestConfig & { metadata?: { startTime: number } }).metadata = {
+      startTime: Date.now(),
+    };
+
     // Development logging (redact sensitive data)
     if (import.meta.env.DEV) {
       const redactedHeaders = { ...config.headers };
@@ -73,15 +79,46 @@ axiosInstance.interceptors.request.use(
  */
 axiosInstance.interceptors.response.use(
   (response) => {
+    // Calculate request duration
+    const config = response.config as InternalAxiosRequestConfig & { metadata?: { startTime: number } };
+    const duration = config.metadata?.startTime 
+      ? Date.now() - config.metadata.startTime 
+      : undefined;
+
+    // Log to diagnostics panel
+    logApiRequest({
+      method: response.config.method?.toUpperCase() || 'GET',
+      url: response.config.url || '',
+      status: response.status,
+      duration,
+      responseSize: JSON.stringify(response.data)?.length,
+    });
+
     // Development logging
     if (import.meta.env.DEV) {
       console.log(`[API Response] ${response.status} ${response.config.url}`, {
         data: response.data,
+        duration: duration ? `${duration}ms` : undefined,
       });
     }
     return response;
   },
   (error: AxiosError<ErrorResponse>) => {
+    // Calculate request duration
+    const config = error.config as InternalAxiosRequestConfig & { metadata?: { startTime: number } } | undefined;
+    const duration = config?.metadata?.startTime 
+      ? Date.now() - config.metadata.startTime 
+      : undefined;
+
+    // Log to diagnostics panel
+    logApiRequest({
+      method: error.config?.method?.toUpperCase() || 'GET',
+      url: error.config?.url || '',
+      status: error.response?.status,
+      duration,
+      error: error.response?.data?.error?.message || error.message,
+    });
+
     // Log error
     console.error('[API Error]', {
       url: error.config?.url,

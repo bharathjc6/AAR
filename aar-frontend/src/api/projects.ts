@@ -90,13 +90,14 @@ export const projectsApi = {
 
   /**
    * Preflight check for a zip file before upload
+   * Note: Backend uses /api/preflight/analyze (not versioned)
    */
   async preflight(file: File): Promise<PreflightResponse> {
     const formData = new FormData();
     formData.append('file', file);
 
     const response = await axiosInstance.post<PreflightResponse>(
-      `${API_PREFIX}/projects/preflight`,
+      '/api/preflight/analyze',
       formData,
       {
         headers: {
@@ -151,12 +152,12 @@ export const reportsApi = {
 
   /**
    * Download report as JSON
+   * Note: Backend uses /report/json endpoint
    */
   async downloadJson(projectId: string): Promise<Blob> {
     const response = await axiosInstance.get(
-      `${API_PREFIX}/projects/${projectId}/report/download`,
+      `${API_PREFIX}/projects/${projectId}/report/json`,
       {
-        params: { format: 'json' },
         responseType: 'blob',
       }
     );
@@ -165,12 +166,12 @@ export const reportsApi = {
 
   /**
    * Download report as PDF
+   * Note: Backend uses /report/pdf endpoint
    */
   async downloadPdf(projectId: string): Promise<Blob> {
     const response = await axiosInstance.get(
-      `${API_PREFIX}/projects/${projectId}/report/download`,
+      `${API_PREFIX}/projects/${projectId}/report/pdf`,
       {
-        params: { format: 'pdf' },
         responseType: 'blob',
       }
     );
@@ -184,39 +185,48 @@ export const reportsApi = {
 export const uploadApi = {
   /**
    * Initialize a resumable upload
+   * Note: Backend uses /api/uploads (not versioned, no projectId in URL)
    */
   async initResumable(
-    projectId: string,
+    _projectId: string, // unused - included for API compatibility
     fileName: string,
-    fileSize: number
-  ): Promise<{ uploadId: string; chunkSize: number }> {
+    fileSize: number,
+    projectName?: string
+  ): Promise<{ uploadId: string; chunkSize: number; sessionId: string }> {
     const response = await axiosInstance.post(
-      `${API_PREFIX}/projects/${projectId}/upload/init`,
-      { fileName, fileSize }
+      '/api/uploads',
+      { 
+        name: projectName || fileName.replace('.zip', ''),
+        fileName, 
+        totalSizeBytes: fileSize,
+        totalParts: Math.ceil(fileSize / (5 * 1024 * 1024)) // 5MB chunks
+      }
     );
-    return response.data;
+    // Map backend response to expected format
+    return {
+      uploadId: response.data.sessionId,
+      sessionId: response.data.sessionId,
+      chunkSize: response.data.chunkSizeBytes || 5 * 1024 * 1024
+    };
   },
 
   /**
    * Upload a single chunk
+   * Note: Backend uses PUT /api/uploads/{sessionId}/parts/{partNumber}
    */
   async uploadChunk(
-    projectId: string,
-    uploadId: string,
+    _projectId: string, // unused - kept for compatibility
+    uploadId: string, // this is actually sessionId
     partNumber: number,
     chunk: Blob,
     onProgress?: (progress: UploadProgress) => void
   ): Promise<{ etag: string }> {
-    const formData = new FormData();
-    formData.append('chunk', chunk);
-
-    const response = await axiosInstance.post(
-      `${API_PREFIX}/projects/${projectId}/upload/part`,
-      formData,
+    const response = await axiosInstance.put(
+      `/api/uploads/${uploadId}/parts/${partNumber}`,
+      chunk,
       {
-        params: { uploadId, partNumber },
         headers: {
-          'Content-Type': 'multipart/form-data',
+          'Content-Type': 'application/octet-stream',
         },
         onUploadProgress: (progressEvent) => {
           if (onProgress && progressEvent.total) {
@@ -230,21 +240,22 @@ export const uploadApi = {
         },
       }
     );
-    return response.data;
+    return { etag: response.data?.etag || `part-${partNumber}` };
   },
 
   /**
    * Finalize a resumable upload
+   * Note: Backend uses POST /api/uploads/{sessionId}/complete
    */
   async finalizeUpload(
-    projectId: string,
-    uploadId: string,
+    _projectId: string, // unused - kept for compatibility
+    uploadId: string, // this is actually sessionId
     parts: { partNumber: number; etag: string }[]
-  ): Promise<void> {
-    await axiosInstance.post(`${API_PREFIX}/projects/${projectId}/upload/complete`, {
-      uploadId,
+  ): Promise<{ projectId: string }> {
+    const response = await axiosInstance.post(`/api/uploads/${uploadId}/complete`, {
       parts,
     });
+    return { projectId: response.data?.projectId || uploadId };
   },
 };
 

@@ -1,0 +1,256 @@
+# =============================================================================
+# GitHub Actions - E2E Test Workflow
+# Runs end-to-end tests with the full stack
+# =============================================================================
+
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  NODE_VERSION: '18'
+  PLAYWRIGHT_VERSION: '1.52.0'
+
+jobs:
+  # ===========================================================================
+  # Build Backend
+  # ===========================================================================
+  build-backend:
+    name: Build Backend
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          
+      - name: Restore dependencies
+        run: dotnet restore AAR.sln
+        
+      - name: Build
+        run: dotnet build AAR.sln --configuration Release --no-restore
+        
+      - name: Publish API
+        run: dotnet publish src/AAR.Api/AAR.Api.csproj --configuration Release --output ./publish/api --no-build
+        
+      - name: Upload API artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-build
+          path: ./publish/api
+          retention-days: 1
+
+  # ===========================================================================
+  # Build Frontend
+  # ===========================================================================
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: aar-frontend/package-lock.json
+          
+      - name: Install dependencies
+        working-directory: aar-frontend
+        run: npm ci
+        
+      - name: Build
+        working-directory: aar-frontend
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: http://localhost:5000
+          
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: aar-frontend/dist
+          retention-days: 1
+
+  # ===========================================================================
+  # Run E2E Tests
+  # ===========================================================================
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          SA_PASSWORD: "E2E_Test_Password123!"
+          ACCEPT_EULA: "Y"
+          MSSQL_PID: "Developer"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'E2E_Test_Password123!' -C -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: aar-frontend/package-lock.json
+          
+      - name: Download API artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: api-build
+          path: ./api
+          
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: ./aar-frontend/dist
+          
+      - name: Install frontend dependencies
+        working-directory: aar-frontend
+        run: npm ci
+        
+      - name: Install Playwright browsers
+        working-directory: aar-frontend
+        run: npx playwright install chromium --with-deps
+        
+      - name: Start API server
+        run: |
+          chmod +x ./api/AAR.Api
+          ./api/AAR.Api &
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ASPNETCORE_URLS: http://localhost:5000
+          ConnectionStrings__DefaultConnection: "Server=localhost;Database=AAR_E2E;User Id=sa;Password=E2E_Test_Password123!;TrustServerCertificate=true"
+          AAR_INTEGRATED_MODE: "true"
+          USE_MOCK_OPENAI: "true"
+          
+      - name: Wait for API
+        run: |
+          echo "Waiting for API to be ready..."
+          for i in {1..30}; do
+            if curl -s http://localhost:5000/health > /dev/null; then
+              echo "API is ready!"
+              break
+            fi
+            echo "Attempt $i: API not ready yet..."
+            sleep 2
+          done
+          
+      - name: Start frontend server
+        working-directory: aar-frontend
+        run: npx serve -s dist -p 3000 &
+        
+      - name: Wait for frontend
+        run: |
+          echo "Waiting for frontend to be ready..."
+          for i in {1..15}; do
+            if curl -s http://localhost:3000 > /dev/null; then
+              echo "Frontend is ready!"
+              break
+            fi
+            echo "Attempt $i: Frontend not ready yet..."
+            sleep 2
+          done
+          
+      - name: Run Playwright tests
+        working-directory: aar-frontend
+        run: npx playwright test --reporter=html,list
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          VITE_API_BASE_URL: http://localhost:5000
+          AAR_API_KEY: "aar_1kToNBn9uKzHic2HNWyZZi0yZurtRsJI"
+          CI: true
+          
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: aar-frontend/playwright-report
+          retention-days: 7
+          
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results
+          path: aar-frontend/e2e/test-results
+          retention-days: 7
+
+  # ===========================================================================
+  # Run E2E Tests with Docker Compose (Alternative)
+  # ===========================================================================
+  e2e-docker:
+    name: E2E Tests (Docker)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Build and start services
+        run: |
+          docker compose -f docker-compose.e2e.yml up -d --build api frontend
+          
+      - name: Wait for services
+        run: |
+          echo "Waiting for services to be healthy..."
+          timeout 120 bash -c 'until docker compose -f docker-compose.e2e.yml ps | grep -q "healthy"; do sleep 5; done'
+          docker compose -f docker-compose.e2e.yml ps
+          
+      - name: Run E2E tests
+        run: |
+          docker compose -f docker-compose.e2e.yml --profile e2e run --rm e2e-runner
+          
+      - name: Collect logs
+        if: always()
+        run: |
+          docker compose -f docker-compose.e2e.yml logs > docker-logs.txt
+          
+      - name: Upload Docker logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-e2e-logs
+          path: docker-logs.txt
+          retention-days: 7
+          
+      - name: Stop services
+        if: always()
+        run: docker compose -f docker-compose.e2e.yml down -v
