@@ -112,7 +112,8 @@ public class SignalRAnalysisHubNotifier : IAnalysisHubNotifier
     public async Task SendFindingAsync(Guid projectId, PartialFindingUpdate finding)
     {
         var group = AnalysisHub.GetProjectGroup(projectId);
-        await _hubContext.Clients.Group(group).SendAsync("FindingUpdate", finding);
+        // Send as "PartialFinding" to match frontend expectations
+        await _hubContext.Clients.Group(group).SendAsync("PartialFinding", new { projectId, finding = finding.Finding });
         
         _logger.LogDebug(
             "Sent finding update for {ProjectId}: {Severity}",
@@ -122,6 +123,12 @@ public class SignalRAnalysisHubNotifier : IAnalysisHubNotifier
     public async Task SendCompletionAsync(Guid projectId, JobCompletionUpdate completion)
     {
         var group = AnalysisHub.GetProjectGroup(projectId);
+        
+        // Send as "StatusChanged" to match frontend expectations
+        var status = completion.IsSuccess ? "completed" : "failed";
+        await _hubContext.Clients.Group(group).SendAsync("StatusChanged", new { projectId = projectId.ToString(), status });
+        
+        // Also send the full completion data for consumers who need it
         await _hubContext.Clients.Group(group).SendAsync("JobCompleted", completion);
         
         _logger.LogInformation(

@@ -4,8 +4,9 @@ import { AnimatePresence } from 'framer-motion';
 import Layout from './components/Layout';
 import LoadingScreen from './components/LoadingScreen';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
-import { useAuth } from './hooks/useAuth';
+import { useAuth, useAuthStore } from './hooks/useAuth';
 import { useApiLogger, setGlobalApiLogCallback } from './hooks/useApiLogger';
+import { getApiKey } from './api';
 
 // Lazy load pages for code splitting
 const LoginPage = lazy(() => import('./features/auth/LoginPage'));
@@ -21,12 +22,16 @@ const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
  */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
+  const hasHydrated = useAuthStore((s) => s._hasHydrated);
 
-  if (isLoading) {
+  // Wait for auth state to be rehydrated from storage
+  if (!hasHydrated || isLoading) {
     return <LoadingScreen />;
   }
 
-  if (!isAuthenticated) {
+  // Check both auth state AND actual API key presence
+  const hasApiKey = !!getApiKey();
+  if (!isAuthenticated || !hasApiKey) {
     return <Navigate to="/login" replace />;
   }
 

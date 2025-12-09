@@ -7,9 +7,11 @@ interface AuthStore {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  _hasHydrated: boolean;
   login: (apiKey: string, persist?: boolean) => Promise<void>;
   logout: () => void;
   setUser: (user: User | null) => void;
+  rehydrateApiKey: () => void;
 }
 
 /**
@@ -18,10 +20,11 @@ interface AuthStore {
  */
 export const useAuthStore = create<AuthStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       isAuthenticated: false,
       isLoading: false,
+      _hasHydrated: false,
 
       login: async (apiKey: string, persistKey = false) => {
         set({ isLoading: true });
@@ -70,6 +73,22 @@ export const useAuthStore = create<AuthStore>()(
           isAuthenticated: !!user,
         });
       },
+
+      // Rehydrate API key from session storage if auth state was persisted
+      rehydrateApiKey: () => {
+        const state = get();
+        if (state.isAuthenticated && !getApiKey()) {
+          // Auth state was restored but API key is gone - check session storage
+          const storedKey = sessionStorage.getItem('aar-api-key');
+          if (storedKey) {
+            setApiKey(storedKey, true);
+          } else {
+            // No API key available, logout
+            set({ user: null, isAuthenticated: false });
+          }
+        }
+        set({ _hasHydrated: true });
+      },
     }),
     {
       name: 'aar-auth',
@@ -78,6 +97,12 @@ export const useAuthStore = create<AuthStore>()(
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),
+      onRehydrateStorage: () => (state) => {
+        // Called after zustand has rehydrated the state from storage
+        if (state) {
+          state.rehydrateApiKey();
+        }
+      },
     }
   )
 );
@@ -86,16 +111,5 @@ export const useAuthStore = create<AuthStore>()(
  * Hook for accessing auth state and actions
  */
 export function useAuth() {
-  const store = useAuthStore();
-
-  // Check for existing API key on mount
-  const existingKey = getApiKey();
-  if (existingKey && !store.isAuthenticated && !store.isLoading) {
-    // Try to restore session
-    store.login(existingKey, false).catch(() => {
-      // Silently fail - user will need to re-authenticate
-    });
-  }
-
-  return store;
+  return useAuthStore();
 }

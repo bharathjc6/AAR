@@ -51,15 +51,17 @@ export function useSignalR(options: UseSignalROptions = {}) {
     findings: [],
   });
 
+  // Track if we should be connected
+  const shouldConnectRef = useRef(autoConnect);
+
   /**
    * Create and configure the SignalR connection
    */
   const createConnection = useCallback(() => {
-    const apiKey = getApiKey();
-
     const connection = new HubConnectionBuilder()
       .withUrl(HUB_URL, {
-        accessTokenFactory: () => apiKey || '',
+        // Get fresh API key on each connection/reconnection attempt
+        accessTokenFactory: () => getApiKey() || '',
       })
       .withAutomaticReconnect({
         nextRetryDelayInMilliseconds: (retryContext) => {
@@ -228,16 +230,28 @@ export function useSignalR(options: UseSignalROptions = {}) {
     }));
   }, []);
 
-  // Auto-connect on mount
+  // Auto-connect on mount - use refs to avoid infinite loops
   useEffect(() => {
-    if (autoConnect) {
-      connect();
-    }
+    shouldConnectRef.current = autoConnect;
+  }, [autoConnect]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const connectIfNeeded = async () => {
+      if (shouldConnectRef.current && mounted) {
+        await connect();
+      }
+    };
+
+    connectIfNeeded();
 
     return () => {
+      mounted = false;
       disconnect();
     };
-  }, [autoConnect, connect, disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount/unmount
 
   // Re-subscribe when project changes
   useEffect(() => {
