@@ -9,6 +9,7 @@ using AAR.Application.DTOs;
 using AAR.Application.Interfaces;
 using AAR.Domain.Entities;
 using AAR.Domain.Interfaces;
+using AAR.Infrastructure.Services.Watchdog;
 using AAR.Shared.Tokenization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -28,6 +29,7 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITokenizer _tokenizer;
     private readonly IJobProgressService _progressService;
+    private readonly IBatchProcessingWatchdog _watchdog;
     private readonly ChunkerOptions _chunkerOptions;
     private readonly ModelRouterOptions _routerOptions;
     private readonly ILogger<RetrievalOrchestrator> _logger;
@@ -41,6 +43,7 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
         IUnitOfWork unitOfWork,
         ITokenizerFactory tokenizerFactory,
         IJobProgressService progressService,
+        IBatchProcessingWatchdog watchdog,
         IOptions<ChunkerOptions> chunkerOptions,
         IOptions<ModelRouterOptions> routerOptions,
         ILogger<RetrievalOrchestrator> logger)
@@ -53,6 +56,7 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
         _unitOfWork = unitOfWork;
         _tokenizer = tokenizerFactory.Create();
         _progressService = progressService;
+        _watchdog = watchdog;
         _chunkerOptions = chunkerOptions.Value;
         _routerOptions = routerOptions.Value;
         _logger = logger;
@@ -394,11 +398,18 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
         var totalBatches = (int)Math.Ceiling((double)allFiles.Count / StreamingFileBatchSize);
         var batchNumber = 0;
 
+        // Track the entire indexing operation with watchdog
+        using var watchdogCts = _watchdog.TrackBatch(projectId, 0, totalBatches, cancellationToken);
+        var linkedCt = watchdogCts.Token;
+
         for (var fileIndex = 0; fileIndex < allFiles.Count; fileIndex += StreamingFileBatchSize)
         {
             batchNumber++;
-            cancellationToken.ThrowIfCancellationRequested();
+            linkedCt.ThrowIfCancellationRequested();
 
+            // Update watchdog with current batch number and phase
+            _watchdog.UpdatePhase(projectId, $"Batch {batchNumber}/{totalBatches}: Starting");
+            
             var batchFiles = allFiles.Skip(fileIndex).Take(StreamingFileBatchSize).ToList();
             
             _logger.LogInformation(
@@ -416,19 +427,23 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                 CurrentFile = $"Processing batch {batchNumber}/{totalBatches}...",
                 FilesProcessed = Math.Min(fileIndex + StreamingFileBatchSize, allFiles.Count),
                 TotalFiles = allFiles.Count
-            }, cancellationToken);
+            }, linkedCt);
 
             try
             {
                 // Load file contents for this batch only
+                _watchdog.UpdatePhase(projectId, $"Batch {batchNumber}/{totalBatches}: Loading files");
                 _logger.LogDebug("Batch {BatchNumber}: Loading file contents...", batchNumber);
                 var batchContents = new Dictionary<string, string>(batchFiles.Count);
                 foreach (var (fullPath, relativePath) in batchFiles)
                 {
                     try
                     {
+                        // Heartbeat for each file to prevent watchdog timeout
+                        _watchdog.Heartbeat(projectId);
+                        
                         // Use synchronous read with timeout to avoid async deadlocks
-                        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        using var cts = CancellationTokenSource.CreateLinkedTokenSource(linkedCt);
                         cts.CancelAfter(TimeSpan.FromSeconds(30)); // 30 second timeout per file
                         
                         var content = await File.ReadAllTextAsync(fullPath, cts.Token);
@@ -443,7 +458,7 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                                 relativePath, content.Length / 1024);
                         }
                     }
-                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (!linkedCt.IsCancellationRequested)
                     {
                         _logger.LogWarning("Timeout reading file: {File}", relativePath);
                     }
@@ -454,6 +469,7 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                 }
                 
                 _logger.LogDebug("Batch {BatchNumber}: Loaded {FileCount} files", batchNumber, batchContents.Count);
+                _watchdog.Heartbeat(projectId);
 
                 if (batchContents.Count == 0)
                 {
@@ -462,16 +478,18 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                 }
 
                 // Chunk this batch with timeout
+                _watchdog.UpdatePhase(projectId, $"Batch {batchNumber}/{totalBatches}: Chunking");
                 _logger.LogDebug("Batch {BatchNumber}: Starting chunking...", batchNumber);
-                using var chunkCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                using var chunkCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCt);
                 chunkCts.CancelAfter(TimeSpan.FromMinutes(2)); // 2 minute timeout for chunking
                 
                 IReadOnlyList<ChunkInfo> chunks;
                 try
                 {
                     chunks = await _chunker.ChunkFilesAsync(batchContents, projectId, chunkCts.Token);
+                    _watchdog.Heartbeat(projectId);
                 }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (!linkedCt.IsCancellationRequested)
                 {
                     _logger.LogWarning("Batch {BatchNumber}: Chunking timed out after 2 minutes, skipping batch", batchNumber);
                     totalFilesProcessed += batchFiles.Count;
@@ -497,25 +515,28 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                 for (var chunkIndex = 0; chunkIndex < chunkList.Count; chunkIndex += StreamingChunkBatchSize)
                 {
                     chunkBatchNum++;
-                    cancellationToken.ThrowIfCancellationRequested();
+                    linkedCt.ThrowIfCancellationRequested();
+                    _watchdog.Heartbeat(projectId);
                     
                     var currentChunkBatch = chunkList.Skip(chunkIndex).Take(StreamingChunkBatchSize).ToList();
                     
                     // Generate embeddings with timeout
+                    _watchdog.UpdatePhase(projectId, $"Batch {batchNumber}/{totalBatches}: Embeddings {chunkBatchNum}");
                     _logger.LogDebug("Batch {BatchNumber}: Generating embeddings for chunk batch {ChunkBatch} ({Count} chunks)...", 
                         batchNumber, chunkBatchNum, currentChunkBatch.Count);
                     
                     var contents = currentChunkBatch.Select(c => c.Content).ToList();
                     
-                    using var embeddingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    embeddingCts.CancelAfter(TimeSpan.FromMinutes(2)); // 2 minute timeout for embeddings
+                    using var embeddingCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCt);
+                    embeddingCts.CancelAfter(TimeSpan.FromMinutes(1)); // Reduced to 1 minute timeout for embeddings
                     
                     IReadOnlyList<float[]> embeddings;
                     try
                     {
                         embeddings = await _embeddingService.CreateEmbeddingsAsync(contents, embeddingCts.Token);
+                        _watchdog.Heartbeat(projectId);
                     }
-                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (!linkedCt.IsCancellationRequested)
                     {
                         _logger.LogWarning("Batch {BatchNumber}: Embedding generation timed out, skipping chunk batch", batchNumber);
                         continue;
@@ -568,8 +589,9 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                     }
 
                     // Save to database with timeout
+                    _watchdog.UpdatePhase(projectId, $"Batch {batchNumber}/{totalBatches}: Saving DB");
                     _logger.LogDebug("Batch {BatchNumber}: Saving {Count} chunks to database...", batchNumber, dbChunks.Count);
-                    using var dbCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    using var dbCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCt);
                     dbCts.CancelAfter(TimeSpan.FromSeconds(60)); // 60 second timeout for DB save
                     
                     try
@@ -577,8 +599,9 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                         await _chunkRepository.AddRangeAsync(dbChunks, dbCts.Token);
                         await _unitOfWork.SaveChangesAsync(dbCts.Token);
                         _unitOfWork.ClearChangeTracker();
+                        _watchdog.Heartbeat(projectId);
                     }
-                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (!linkedCt.IsCancellationRequested)
                     {
                         _logger.LogWarning("Batch {BatchNumber}: Database save timed out", batchNumber);
                         _unitOfWork.ClearChangeTracker();
@@ -586,8 +609,10 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                     }
 
                     // Index in vector store
+                    _watchdog.UpdatePhase(projectId, $"Batch {batchNumber}/{totalBatches}: Vector indexing");
                     _logger.LogDebug("Batch {BatchNumber}: Indexing vectors...", batchNumber);
-                    await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
+                    await _vectorStore.IndexVectorsAsync(vectorBatch, linkedCt);
+                    _watchdog.Heartbeat(projectId);
 
                     totalChunksCreated += dbChunks.Count;
                     totalEmbeddingsGenerated += embeddings.Count;
@@ -622,6 +647,9 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
         }
 
         stopwatch.Stop();
+
+        // Mark project as complete in watchdog
+        _watchdog.Complete(projectId);
 
         _logger.LogInformation(
             "Streaming indexed {ChunkCount} chunks ({TotalTokens} tokens) for project {ProjectId} in {Time}ms",

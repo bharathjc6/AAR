@@ -7,6 +7,7 @@ using AAR.Application.Interfaces;
 using AAR.Domain.Entities;
 using AAR.Domain.Interfaces;
 using AAR.Infrastructure.Services.Retrieval;
+using AAR.Infrastructure.Services.Watchdog;
 using AAR.Shared.Tokenization;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
@@ -27,6 +28,7 @@ public class RetrievalOrchestratorTests
     private readonly Mock<ITokenizerFactory> _tokenizerFactoryMock;
     private readonly Mock<ITokenizer> _tokenizerMock;
     private readonly Mock<IJobProgressService> _progressServiceMock;
+    private readonly Mock<IBatchProcessingWatchdog> _watchdogMock;
     private readonly IOptions<ChunkerOptions> _chunkerOptions;
     private readonly IOptions<ModelRouterOptions> _routerOptions;
     private readonly Mock<ILogger<RetrievalOrchestrator>> _loggerMock;
@@ -43,10 +45,15 @@ public class RetrievalOrchestratorTests
         _tokenizerFactoryMock = new Mock<ITokenizerFactory>();
         _tokenizerMock = new Mock<ITokenizer>();
         _progressServiceMock = new Mock<IJobProgressService>();
+        _watchdogMock = new Mock<IBatchProcessingWatchdog>();
         _loggerMock = new Mock<ILogger<RetrievalOrchestrator>>();
 
         _tokenizerFactoryMock.Setup(f => f.Create()).Returns(_tokenizerMock.Object);
         _embeddingServiceMock.Setup(e => e.ModelName).Returns("test-model");
+        
+        // Setup watchdog to return a linked CTS
+        _watchdogMock.Setup(w => w.TrackBatch(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns((Guid _, int _, int _, CancellationToken ct) => CancellationTokenSource.CreateLinkedTokenSource(ct));
 
         _chunkerOptions = Options.Create(new ChunkerOptions
         {
@@ -71,6 +78,7 @@ public class RetrievalOrchestratorTests
             _unitOfWorkMock.Object,
             _tokenizerFactoryMock.Object,
             _progressServiceMock.Object,
+            _watchdogMock.Object,
             _chunkerOptions,
             _routerOptions,
             _loggerMock.Object);

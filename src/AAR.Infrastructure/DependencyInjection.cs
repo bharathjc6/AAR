@@ -20,6 +20,7 @@ using AAR.Infrastructure.Services.Routing;
 using AAR.Infrastructure.Services.Telemetry;
 using AAR.Infrastructure.Services.Validation;
 using AAR.Infrastructure.Services.VectorStore;
+using AAR.Infrastructure.Services.Watchdog;
 using AAR.Shared.Tokenization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -232,6 +233,11 @@ public static class DependencyInjection
 
         // Job progress reporting (SignalR streaming)
         services.AddScoped<IJobProgressService, JobProgressService>();
+
+        // Batch processing watchdog for stuck detection
+        services.Configure<WatchdogOptions>(configuration.GetSection("Watchdog"));
+        services.AddSingleton<IBatchProcessingWatchdog, BatchProcessingWatchdog>();
+        services.AddHostedService(sp => (BatchProcessingWatchdog)sp.GetRequiredService<IBatchProcessingWatchdog>());
 
         // NOTE: InMemoryJobQueueService removed - MassTransit handles all queue operations
         // For Azure Service Bus in prod, configure MassTransit with Azure transport

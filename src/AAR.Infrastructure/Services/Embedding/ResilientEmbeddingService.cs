@@ -58,10 +58,11 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
         var acquired = false;
         try
         {
-            acquired = await _rateLimiter.WaitAsync(TimeSpan.FromMinutes(2), cancellationToken);
+            // IMPROVED: Reduced from 2 minutes to 30 seconds to prevent long stalls
+            acquired = await _rateLimiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
             if (!acquired)
             {
-                _logger.LogWarning("Single embedding semaphore wait timed out. Proceeding anyway.");
+                _logger.LogWarning("Single embedding semaphore wait timed out after 30s. Proceeding anyway.");
             }
             
             var result = await _pipeline.ExecuteAsync(
@@ -94,12 +95,12 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
         var acquired = false;
         try
         {
-            // Use timeout-based wait to prevent indefinite blocking
-            // Don't use linked CTS as it causes cancellation issues downstream
-            acquired = await _rateLimiter.WaitAsync(TimeSpan.FromMinutes(2), cancellationToken);
+            // IMPROVED: Reduced from 2 minutes to 30 seconds to prevent long stalls
+            // Stuck batch processing at batch 21/33 was caused by indefinite semaphore waits
+            acquired = await _rateLimiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
             if (!acquired)
             {
-                _logger.LogWarning("Semaphore wait timed out after 2 minutes. Proceeding without semaphore.");
+                _logger.LogWarning("Batch embedding semaphore wait timed out after 30s. Proceeding without semaphore.");
             }
 
             var result = await _pipeline.ExecuteAsync(
@@ -155,11 +156,16 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
 
     private async Task WaitForRateLimitAsync(int estimatedTokens, CancellationToken cancellationToken)
     {
-        const int maxWaitIterations = 120; // Max 2 minutes of waiting (120 x 1s)
+        // IMPROVED: Reduced max wait to 30 seconds to prevent long stalls
+        // Previous 2-minute wait caused stuck batch processing in production
+        const int maxWaitIterations = 30; // Max 30 seconds of waiting (30 x 1s)
         var waitIterations = 0;
+        var startTime = DateTime.UtcNow;
         
         while (waitIterations < maxWaitIterations)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            
             lock (_rateLock)
             {
                 // Reset period if minute has passed
@@ -168,6 +174,7 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
                 {
                     _periodStart = now;
                     _tokensThisPeriod = 0;
+                    _logger.LogDebug("Rate limit period reset. New period started.");
                 }
 
                 // If estimated tokens alone exceed the limit, proceed anyway after waiting for period reset
@@ -202,11 +209,12 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
                     : TimeSpan.FromSeconds(1);
             }
 
-            if (waitIterations % 10 == 0) // Log every 10 seconds
+            if (waitIterations % 5 == 0) // Log every 5 seconds (more frequent to aid debugging)
             {
                 _logger.LogDebug(
-                    "Rate limited: {Used}/{Limit} tokens/min. Waiting {Wait:F1}s (iteration {Iteration})",
-                    _tokensThisPeriod, _options.EmbeddingTokensPerMinute, waitTime.TotalSeconds, waitIterations);
+                    "Rate limited: {Used}/{Limit} tokens/min. Waiting {Wait:F1}s (iteration {Iteration}/{Max}, elapsed {Elapsed:F1}s)",
+                    _tokensThisPeriod, _options.EmbeddingTokensPerMinute, waitTime.TotalSeconds, 
+                    waitIterations, maxWaitIterations, (DateTime.UtcNow - startTime).TotalSeconds);
             }
 
             await Task.Delay(waitTime, cancellationToken);
@@ -215,12 +223,14 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
         
         // Max wait exceeded, proceed anyway to prevent deadlock
         _logger.LogWarning(
-            "Rate limit max wait exceeded after {Iterations} iterations. Proceeding with {Tokens} tokens.",
-            waitIterations, estimatedTokens);
+            "Rate limit max wait exceeded after {Iterations} iterations ({Elapsed:F1}s). Proceeding with {Tokens} tokens.",
+            waitIterations, (DateTime.UtcNow - startTime).TotalSeconds, estimatedTokens);
         
         lock (_rateLock)
         {
-            _tokensThisPeriod += estimatedTokens;
+            // Reset period since we're forcing through
+            _periodStart = DateTime.UtcNow;
+            _tokensThisPeriod = estimatedTokens;
         }
     }
 
