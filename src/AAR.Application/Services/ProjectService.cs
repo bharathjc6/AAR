@@ -23,6 +23,7 @@ public class ProjectService : IProjectService
     private readonly IBlobStorageService _blobStorage;
     private readonly IMessageBus _messageBus;
     private readonly IGitService _gitService;
+    private readonly IVectorStore _vectorStore;
     private readonly ILogger<ProjectService> _logger;
 
     private const string ProjectsContainer = "projects";
@@ -32,12 +33,14 @@ public class ProjectService : IProjectService
         IBlobStorageService blobStorage,
         IMessageBus messageBus,
         IGitService gitService,
+        IVectorStore vectorStore,
         ILogger<ProjectService> logger)
     {
         _unitOfWork = unitOfWork;
         _blobStorage = blobStorage;
         _messageBus = messageBus;
         _gitService = gitService;
+        _vectorStore = vectorStore;
         _logger = logger;
     }
 
@@ -318,6 +321,61 @@ public class ProjectService : IProjectService
         return projects.Map(MapToSummaryDto);
     }
 
+    /// <inheritdoc/>
+    public async Task<Result<bool>> DeleteProjectAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _logger.LogInformation("Deleting project: {ProjectId}", projectId);
+
+            var project = await _unitOfWork.Projects.GetByIdAsync(projectId, cancellationToken);
+            if (project is null)
+            {
+                return DomainErrors.Project.NotFound(projectId);
+            }
+
+            // Use execution strategy to handle SQL Server retry logic with transactions
+            await _unitOfWork.ExecuteInTransactionAsync(async ct =>
+            {
+                // 1. Delete ReviewFindings explicitly first (has Restrict FK on Report)
+                // Must save immediately because EF may not order deletes correctly
+                await _unitOfWork.ReviewFindings.DeleteByProjectIdAsync(projectId, ct);
+                await _unitOfWork.SaveChangesAsync(ct);
+
+                // 2. Delete vectors from vector store
+                await _vectorStore.DeleteByProjectIdAsync(projectId, ct);
+
+                // 3. Delete chunks from database
+                await _unitOfWork.Chunks.DeleteByProjectIdAsync(projectId, ct);
+                await _unitOfWork.SaveChangesAsync(ct);
+
+                // 4. Delete job checkpoints
+                await _unitOfWork.JobCheckpoints.DeleteByProjectIdAsync(projectId, ct);
+
+                // 5. Delete blob storage files
+                if (!string.IsNullOrEmpty(project.StoragePath))
+                {
+                    await _blobStorage.DeleteByPrefixAsync(ProjectsContainer, project.Id.ToString(), ct);
+                }
+
+                // 6. Delete project (cascades to Report, FileRecords)
+                await _unitOfWork.Projects.DeleteAsync(projectId, ct);
+                
+                return true;
+            }, cancellationToken);
+
+            _logger.LogInformation("Project deleted successfully: {ProjectId}", projectId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting project: {ProjectId}", projectId);
+            return DomainErrors.Validation.InvalidRequest($"Failed to delete project: {ex.Message}");
+        }
+    }
+
     private static ProjectDetailDto MapToDetailDto(Project project)
     {
         return new ProjectDetailDto
@@ -397,5 +455,9 @@ public interface IProjectService
     Task<PagedResult<ProjectSummaryDto>> GetProjectsAsync(
         PaginationParams pagination,
         Guid? apiKeyId = null,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<bool>> DeleteProjectAsync(
+        Guid projectId,
         CancellationToken cancellationToken = default);
 }

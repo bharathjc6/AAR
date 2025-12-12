@@ -3,29 +3,38 @@
 // MassTransit consumer for processing analysis commands
 // =============================================================================
 
+using AAR.Application.Configuration;
 using AAR.Application.DTOs;
 using AAR.Application.Interfaces;
 using AAR.Application.Messaging;
+using AAR.Domain.Entities;
 using AAR.Domain.Interfaces;
 using MassTransit;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.IO.Compression;
 
 namespace AAR.Infrastructure.Messaging;
 
 /// <summary>
-/// MassTransit consumer that processes StartAnalysisCommand messages
+/// MassTransit consumer that processes StartAnalysisCommand messages.
+/// Supports RAG-based file routing for memory-efficient processing.
 /// </summary>
 public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAgentOrchestrator _orchestrator;
+    private readonly IRagAwareAgentOrchestrator? _ragOrchestrator;
     private readonly IBlobStorageService _blobService;
     private readonly IRetrievalOrchestrator _retrievalOrchestrator;
+    private readonly IFileAnalysisRouter _fileRouter;
     private readonly IStreamingExtractor _streamingExtractor;
     private readonly IJobProgressService _progressService;
     private readonly IAnalysisTelemetry _telemetry;
+    private readonly IMemoryMonitor _memoryMonitor;
+    private readonly ITempFileChunkWriter _chunkWriter;
     private readonly IPublishEndpoint _publishEndpoint;
+    private readonly RagProcessingOptions _ragOptions;
     private readonly ILogger<StartAnalysisConsumer> _logger;
 
     public StartAnalysisConsumer(
@@ -33,20 +42,30 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
         IAgentOrchestrator orchestrator,
         IBlobStorageService blobService,
         IRetrievalOrchestrator retrievalOrchestrator,
+        IFileAnalysisRouter fileRouter,
         IStreamingExtractor streamingExtractor,
         IJobProgressService progressService,
         IAnalysisTelemetry telemetry,
+        IMemoryMonitor memoryMonitor,
+        ITempFileChunkWriter chunkWriter,
         IPublishEndpoint publishEndpoint,
-        ILogger<StartAnalysisConsumer> logger)
+        IOptions<RagProcessingOptions> ragOptions,
+        ILogger<StartAnalysisConsumer> logger,
+        IRagAwareAgentOrchestrator? ragOrchestrator = null)
     {
         _unitOfWork = unitOfWork;
         _orchestrator = orchestrator;
+        _ragOrchestrator = ragOrchestrator;
         _blobService = blobService;
         _retrievalOrchestrator = retrievalOrchestrator;
+        _fileRouter = fileRouter;
         _streamingExtractor = streamingExtractor;
         _progressService = progressService;
         _telemetry = telemetry;
+        _memoryMonitor = memoryMonitor;
+        _chunkWriter = chunkWriter;
         _publishEndpoint = publishEndpoint;
+        _ragOptions = ragOptions.Value;
         _logger = logger;
     }
 
@@ -123,19 +142,43 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
                     TotalFiles = extractedFiles
                 }, context.CancellationToken);
 
-                // INDEXING STEP: Chunk, embed, and index project files for RAG
-                var files = LoadSourceFiles(workingDirectory);
-                if (files.Count > 0)
+                // Check memory before starting heavy processing
+                _memoryMonitor.RecordMemorySample();
+                if (_memoryMonitor.ShouldPauseProcessing)
                 {
-                    _logger.LogInformation("Indexing {FileCount} files for project {ProjectId}", files.Count, project.Id);
-                    var indexResult = await _retrievalOrchestrator.IndexProjectAsync(
-                        project.Id, files, context.CancellationToken);
-                    
-                    _logger.LogInformation(
-                        "Indexed project: {ChunksCreated} chunks, {Embeddings} embeddings, {Tokens} tokens in {Duration}ms",
-                        indexResult.ChunksCreated, indexResult.EmbeddingsGenerated, 
-                        indexResult.TotalTokens, indexResult.IndexingTimeMs);
+                    throw new InvalidOperationException(
+                        $"Insufficient memory to start indexing. Current: {_memoryMonitor.CurrentMemoryMB}MB");
                 }
+
+                // Check disk space
+                if (!_chunkWriter.HasSufficientDiskSpace(_ragOptions.RagChunkThresholdBytes * extractedFiles))
+                {
+                    _logger.LogWarning("Low disk space detected, proceeding with caution");
+                }
+
+                // INDEXING STEP: Chunk, embed, and index project files for RAG using streaming
+                // This reads files on-demand to minimize memory usage for large projects
+                _logger.LogInformation("Starting streaming indexing for project {ProjectId}", project.Id);
+                var indexResult = await _retrievalOrchestrator.IndexProjectStreamingAsync(
+                    project.Id, workingDirectory, context.CancellationToken);
+                
+                _logger.LogInformation(
+                    "Indexed project: {ChunksCreated} chunks, {Embeddings} embeddings, {Tokens} tokens in {Duration}ms",
+                    indexResult.ChunksCreated, indexResult.EmbeddingsGenerated, 
+                    indexResult.TotalTokens, indexResult.IndexingTimeMs);
+
+                // Create analysis plan with routing decisions
+                _logger.LogInformation("Creating analysis plan for project {ProjectId}", project.Id);
+                var analysisPlan = await _fileRouter.CreateAnalysisPlanAsync(
+                    project.Id, workingDirectory, context.CancellationToken);
+
+                _logger.LogInformation(
+                    "Analysis plan: {DirectSend} direct, {RagChunk} RAG, {Skipped} skipped, {HighRisk} high-risk",
+                    analysisPlan.DirectSendCount, analysisPlan.RagChunkCount, 
+                    analysisPlan.SkippedCount, analysisPlan.HighRiskFiles.Count);
+
+                // Load file count for progress (without loading content)
+                var fileCount = indexResult.FilesProcessed;
 
                 // Report analyzing phase
                 await _progressService.ReportProgressAsync(new JobProgressUpdate
@@ -144,12 +187,22 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
                     Phase = "Analyzing",
                     ProgressPercent = 40,
                     CurrentFile = "Running AI analysis agents...",
-                    FilesProcessed = files.Count,
-                    TotalFiles = files.Count
+                    FilesProcessed = fileCount,
+                    TotalFiles = fileCount
                 }, context.CancellationToken);
 
-                // Run the analysis orchestrator
-                var report = await _orchestrator.AnalyzeAsync(project.Id, workingDirectory, context.CancellationToken);
+                // Run the analysis orchestrator - prefer RAG-aware if available
+                Report report;
+                if (_ragOrchestrator != null)
+                {
+                    _logger.LogInformation("Using RAG-aware orchestrator with analysis plan");
+                    report = await _ragOrchestrator.AnalyzeWithPlanAsync(analysisPlan, context.CancellationToken);
+                }
+                else
+                {
+                    _logger.LogInformation("Using standard orchestrator (RAG orchestrator not available)");
+                    report = await _orchestrator.AnalyzeAsync(project.Id, workingDirectory, context.CancellationToken);
+                }
 
                 // Log telemetry
                 var telemetrySummary = _telemetry.GetProjectSummary(project.Id);
@@ -165,16 +218,24 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
                     Phase = "Saving",
                     ProgressPercent = 90,
                     CurrentFile = "Saving report...",
-                    FilesProcessed = files.Count,
-                    TotalFiles = files.Count
+                    FilesProcessed = fileCount,
+                    TotalFiles = fileCount
                 }, context.CancellationToken);
 
-                // Save the report
-                await _unitOfWork.Reports.AddAsync(report, context.CancellationToken);
+                // NOTE: The report is already saved by the ReportAggregator.AggregateAsync method
+                // Clear change tracker to avoid concurrency issues with stale entities
+                _unitOfWork.ClearChangeTracker();
+                
+                // Reload the project to get fresh state after aggregator's SaveChangesAsync
+                var freshProject = await _unitOfWork.Projects.GetByIdAsync(project.Id, context.CancellationToken);
+                if (freshProject == null)
+                {
+                    throw new InvalidOperationException($"Project {project.Id} was deleted during analysis");
+                }
 
-                // Update project status
-                project.CompleteAnalysis(fileCount: files.Count, totalLinesOfCode: 0);
-                await _unitOfWork.Projects.UpdateAsync(project, context.CancellationToken);
+                // Update project status with fresh entity
+                freshProject.CompleteAnalysis(fileCount: fileCount, totalLinesOfCode: 0);
+                await _unitOfWork.Projects.UpdateAsync(freshProject, context.CancellationToken);
                 await _unitOfWork.SaveChangesAsync(context.CancellationToken);
 
                 var duration = DateTime.UtcNow - startTime;
@@ -192,7 +253,7 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
                     ProcessingTimeSeconds = (int)duration.TotalSeconds,
                     Statistics = new JobStatistics
                     {
-                        FilesProcessed = files.Count,
+                        FilesProcessed = fileCount,
                         FindingsCount = report.Findings.Count,
                         HighSeverityCount = report.Findings.Count(f => f.Severity == Domain.Enums.Severity.High || f.Severity == Domain.Enums.Severity.Critical),
                         MediumSeverityCount = report.Findings.Count(f => f.Severity == Domain.Enums.Severity.Medium),

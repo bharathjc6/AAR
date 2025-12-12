@@ -52,6 +52,7 @@ try
     builder.Services.AddScoped<IAnalysisAgent, SecurityAgent>();
     builder.Services.AddScoped<IAnalysisAgent, ArchitectureAdvisorAgent>();
     builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
+    builder.Services.AddScoped<IRagAwareAgentOrchestrator, RagAwareAgentOrchestrator>();
     builder.Services.AddScoped<IReportAggregator, ReportAggregator>();
     
     // MassTransit consumers are registered via AddInfrastructureServices

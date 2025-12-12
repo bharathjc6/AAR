@@ -41,6 +41,7 @@
   <ItemGroup>
     <ProjectReference Include="..\AAR.Application\AAR.Application.csproj" />
     <ProjectReference Include="..\AAR.Infrastructure\AAR.Infrastructure.csproj" />
+    <ProjectReference Include="..\AAR.Worker\AAR.Worker.csproj" />
   </ItemGroup>
 
 </Project>

@@ -43,6 +43,19 @@ public interface IRetrievalOrchestrator
         Guid projectId,
         IDictionary<string, string> files,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Indexes a project's files using streaming to minimize memory usage.
+    /// Reads files on-demand from disk rather than loading all into memory.
+    /// </summary>
+    /// <param name="projectId">Project ID</param>
+    /// <param name="workingDirectory">Directory containing source files</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Indexing statistics</returns>
+    Task<IndexingResult> IndexProjectStreamingAsync(
+        Guid projectId,
+        string workingDirectory,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>

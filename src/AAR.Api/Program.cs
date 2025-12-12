@@ -9,10 +9,12 @@ using AAR.Api.Middleware;
 using AAR.Api.Security;
 using AAR.Application;
 using AAR.Application.Interfaces;
+using AAR.Application.Services;
 using AAR.Infrastructure;
 using AAR.Infrastructure.KeyVault;
 using AAR.Infrastructure.Persistence;
 using AAR.Shared.KeyVault;
+using AAR.Worker.Agents;
 using Asp.Versioning;
 using Azure.Identity;
 using HealthChecks.UI.Client;
@@ -112,8 +114,14 @@ try
     // Register agents if in integrated mode (for local testing)
     if (integratedMode)
     {
-        // These would normally be registered in the Worker
-        builder.Services.AddScoped<AAR.Application.Interfaces.IAgentOrchestrator, AAR.Api.TestSupport.MockAgentOrchestrator>();
+        // Register the real agents from AAR.Worker
+        builder.Services.AddScoped<IAnalysisAgent, StructureAgent>();
+        builder.Services.AddScoped<IAnalysisAgent, CodeQualityAgent>();
+        builder.Services.AddScoped<IAnalysisAgent, SecurityAgent>();
+        builder.Services.AddScoped<IAnalysisAgent, ArchitectureAdvisorAgent>();
+        builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
+        builder.Services.AddScoped<IRagAwareAgentOrchestrator, RagAwareAgentOrchestrator>();
+        builder.Services.AddScoped<IReportAggregator, ReportAggregator>();
     }
 
     // Add secure authentication (JWT + API key fallback)
@@ -139,7 +147,12 @@ try
     });
 
     // Controllers and endpoints
-    builder.Services.AddControllers();
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            // Serialize enums as strings instead of numeric values
+            options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+        });
     builder.Services.AddEndpointsApiExplorer();
     
     // SignalR for real-time progress streaming
@@ -371,8 +384,17 @@ try
     {
         var db = scope.ServiceProvider.GetRequiredService<AarDbContext>();
         
-        Log.Information("Applying database migrations...");
-        await db.Database.MigrateAsync();
+        // Skip migrations for in-memory database (used in testing)
+        if (!app.Environment.IsEnvironment("Testing") && db.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            Log.Information("Applying database migrations...");
+            await db.Database.MigrateAsync();
+        }
+        else if (app.Environment.IsEnvironment("Testing"))
+        {
+            Log.Information("Testing environment detected - ensuring database is created...");
+            await db.Database.EnsureCreatedAsync();
+        }
         
         // Seed default API key for development
         if (app.Environment.IsDevelopment())
@@ -430,4 +452,13 @@ static async Task SeedDevelopmentDataAsync(AarDbContext db)
     
     // Output full key to console only (not to log file)
     Console.WriteLine($"\n🔑 Development API Key: {knownTestKey}\n");
+}
+
+// Explicit partial class declaration for WebApplicationFactory<Program> in tests
+namespace AAR.Api
+{
+    /// <summary>
+    /// Partial Program class for test accessibility with WebApplicationFactory
+    /// </summary>
+    public partial class Program { }
 }

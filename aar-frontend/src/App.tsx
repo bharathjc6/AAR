@@ -14,7 +14,6 @@ const DashboardPage = lazy(() => import('./features/dashboard/DashboardPage'));
 const ProjectsListPage = lazy(() => import('./features/projects/ProjectsListPage'));
 const ProjectDetailsPage = lazy(() => import('./features/projects/ProjectDetailsPage'));
 const NewProjectPage = lazy(() => import('./features/projects/NewProjectPage'));
-const LogsPage = lazy(() => import('./features/logs/LogsPage'));
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
 
 /**
@@ -73,7 +72,6 @@ function App() {
               <Route path="projects" element={<ProjectsListPage />} />
               <Route path="projects/new" element={<NewProjectPage />} />
               <Route path="projects/:id" element={<ProjectDetailsPage />} />
-              <Route path="logs" element={<LogsPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
 

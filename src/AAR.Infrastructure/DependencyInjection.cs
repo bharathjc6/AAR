@@ -13,8 +13,10 @@ using AAR.Infrastructure.Repositories;
 using AAR.Infrastructure.Services;
 using AAR.Infrastructure.Services.Chunking;
 using AAR.Infrastructure.Services.Embedding;
+using AAR.Infrastructure.Services.Memory;
 using AAR.Infrastructure.Services.Resilience;
 using AAR.Infrastructure.Services.Retrieval;
+using AAR.Infrastructure.Services.Routing;
 using AAR.Infrastructure.Services.Telemetry;
 using AAR.Infrastructure.Services.Validation;
 using AAR.Infrastructure.Services.VectorStore;
@@ -87,6 +89,12 @@ public static class DependencyInjection
         services.Configure<WorkerProcessingOptions>(configuration.GetSection(WorkerProcessingOptions.SectionName));
         services.Configure<StoragePolicyOptions>(configuration.GetSection(StoragePolicyOptions.SectionName));
         services.Configure<ResumableUploadOptions>(configuration.GetSection(ResumableUploadOptions.SectionName));
+
+        // RAG processing configuration
+        services.Configure<RagProcessingOptions>(configuration.GetSection(RagProcessingOptions.SectionName));
+        services.Configure<MemoryManagementOptions>(configuration.GetSection(MemoryManagementOptions.SectionName));
+        services.Configure<ConcurrencyOptions>(configuration.GetSection(ConcurrencyOptions.SectionName));
+        services.Configure<JobApprovalOptions>(configuration.GetSection(JobApprovalOptions.SectionName));
 
         // Configure storage options
         services.Configure<FileSystemStorageOptions>(options =>
@@ -195,6 +203,13 @@ public static class DependencyInjection
         // Retrieval orchestrator
         services.Configure<ModelRouterOptions>(configuration.GetSection(ModelRouterOptions.SectionName));
         services.AddScoped<IRetrievalOrchestrator, RetrievalOrchestrator>();
+
+        // RAG routing and memory management services
+        services.AddScoped<IRagRiskFilter, RagRiskFilter>();
+        services.AddScoped<IFileAnalysisRouter, FileAnalysisRouter>();
+        services.AddSingleton<IMemoryMonitor, MemoryMonitor>();
+        services.AddSingleton<IConcurrencyLimiter, ConcurrencyLimiter>();
+        services.AddSingleton<ITempFileChunkWriter, TempFileChunkWriter>();
 
         // Schema validation
         services.Configure<SchemaValidationOptions>(configuration.GetSection(SchemaValidationOptions.SectionName));

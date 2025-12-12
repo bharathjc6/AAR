@@ -49,12 +49,32 @@ import { useProject, useReport, useStartAnalysis, useResetProject, useDownloadRe
 import { useSignalR } from '../../hooks/useSignalR';
 import { Finding, Severity, FindingCategory, ProjectStatus } from '../../types';
 
+/**
+ * Normalize status to lowercase string for comparison
+ * Handles both string (PascalCase or camelCase) and numeric values
+ */
+const normalizeStatus = (status: ProjectStatus): string => {
+  if (typeof status === 'number') {
+    // Map numeric values to status strings (based on backend enum)
+    const numericMap: Record<number, string> = {
+      1: 'created',
+      2: 'filesready',
+      3: 'queued',
+      4: 'analyzing',
+      5: 'completed',
+      6: 'failed',
+    };
+    return numericMap[status] || 'unknown';
+  }
+  return String(status).toLowerCase();
+};
+
 // Status constants for comparison (handles both string and number formats)
-const isStatusCompleted = (status: ProjectStatus) => status === 'completed' || status === 5;
-const isStatusAnalyzing = (status: ProjectStatus) => status === 'analyzing' || status === 4;
-const isStatusQueued = (status: ProjectStatus) => status === 'queued' || status === 2;
-const isStatusFilesReady = (status: ProjectStatus) => status === 'filesReady' || status === 3;
-const isStatusFailed = (status: ProjectStatus) => status === 'failed' || status === 6;
+const isStatusCompleted = (status: ProjectStatus) => normalizeStatus(status) === 'completed';
+const isStatusAnalyzing = (status: ProjectStatus) => normalizeStatus(status) === 'analyzing';
+const isStatusQueued = (status: ProjectStatus) => normalizeStatus(status) === 'queued';
+const isStatusFilesReady = (status: ProjectStatus) => normalizeStatus(status) === 'filesready';
+const isStatusFailed = (status: ProjectStatus) => normalizeStatus(status) === 'failed';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -109,15 +129,33 @@ export default function ProjectDetailsPage() {
   const canStartAnalysis = project?.status ? isStatusFilesReady(project.status) : false;
   const canReset = isAnalyzing || isQueued || isFailed;
 
+  // Helper to convert numeric category to string (backend may send numeric enum values)
+  const getCategoryName = (category: FindingCategory | number): string => {
+    if (typeof category === 'string') return category;
+    // Map numeric values to category names (based on backend enum)
+    const categoryMap: Record<number, string> = {
+      1: 'performance',
+      2: 'security',
+      3: 'architecture',
+      4: 'codeQuality',
+      5: 'structure',
+      6: 'complexity',
+      7: 'maintainability',
+      8: 'bestPractice',
+      99: 'other',
+    };
+    return categoryMap[category] || `category-${category}`;
+  };
+
   // Group findings by category
   const findingsByCategory = useMemo(() => {
     if (!report?.findings) return {};
     return report.findings.reduce((acc, finding) => {
-      const category = finding.category;
+      const category = getCategoryName(finding.category);
       if (!acc[category]) acc[category] = [];
       acc[category].push(finding);
       return acc;
-    }, {} as Record<FindingCategory, Finding[]>);
+    }, {} as Record<string, Finding[]>);
   }, [report?.findings]);
 
   // Count findings by severity
@@ -136,20 +174,26 @@ export default function ProjectDetailsPage() {
     );
   }, [report?.findings]);
 
-  // Category icons
-  const getCategoryIcon = (category: FindingCategory) => {
-    switch (category) {
-      case 'security':
-        return <SecurityIcon />;
-      case 'performance':
-        return <PerformanceIcon />;
-      case 'architecture':
-        return <ArchitectureIcon />;
-      case 'codeQuality':
-        return <BugIcon />;
-      default:
-        return <CodeIcon />;
-    }
+  // Category icons - accepts both string and normalized category name
+  const getCategoryIcon = (category: string) => {
+    const normalizedCategory = category.toLowerCase();
+    if (normalizedCategory.includes('security')) return <SecurityIcon />;
+    if (normalizedCategory.includes('performance')) return <PerformanceIcon />;
+    if (normalizedCategory.includes('architecture')) return <ArchitectureIcon />;
+    if (normalizedCategory.includes('codequality') || normalizedCategory.includes('quality')) return <BugIcon />;
+    if (normalizedCategory.includes('structure')) return <CodeIcon />;
+    if (normalizedCategory.includes('complexity')) return <CodeIcon />;
+    if (normalizedCategory.includes('maintainability')) return <CodeIcon />;
+    if (normalizedCategory.includes('bestpractice')) return <CodeIcon />;
+    return <CodeIcon />;
+  };
+
+  // Format category name for display (capitalize and add spaces)
+  const formatCategoryName = (category: string): string => {
+    // Handle camelCase: insert space before capital letters
+    const spaced = category.replace(/([a-z])([A-Z])/g, '$1 $2');
+    // Capitalize first letter
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
   };
 
   // Severity icon
@@ -340,14 +384,16 @@ export default function ProjectDetailsPage() {
                 <>
                   <LinearProgress
                     variant="determinate"
-                    value={analysisProgress.progress}
+                    value={analysisProgress.progressPercent ?? analysisProgress.progress ?? 0}
                     sx={{ height: 8, borderRadius: 4, mb: 1 }}
                   />
                   <Typography variant="body2" color="text.secondary">
-                    {analysisProgress.phase}: {analysisProgress.message}
+                    {analysisProgress.phase}: {analysisProgress.currentFile || analysisProgress.message || 'Processing...'}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {analysisProgress.progress}% complete
+                    {analysisProgress.progressPercent ?? analysisProgress.progress ?? 0}% complete
+                    {analysisProgress.filesProcessed !== undefined && analysisProgress.totalFiles !== undefined && 
+                      ` (${analysisProgress.filesProcessed}/${analysisProgress.totalFiles} files)`}
                   </Typography>
                 </>
               ) : (
@@ -472,8 +518,8 @@ export default function ProjectDetailsPage() {
                               width: '100%',
                             }}
                           >
-                            {getCategoryIcon(category as FindingCategory)}
-                            <Typography fontWeight={500}>{category}</Typography>
+                            {getCategoryIcon(category)}
+                            <Typography fontWeight={500}>{formatCategoryName(category)}</Typography>
                             <Chip
                               size="small"
                               label={findings.length}
@@ -574,9 +620,24 @@ export default function ProjectDetailsPage() {
 
                 {/* Recommendations Tab */}
                 <TabPanel value={tabValue} index={2}>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
-                    {report.recommendations || 'No recommendations available.'}
-                  </Typography>
+                  {report.recommendations && report.recommendations.length > 0 ? (
+                    <Box component="ul" sx={{ pl: 2, m: 0 }}>
+                      {report.recommendations.map((recommendation, index) => (
+                        <Typography
+                          key={index}
+                          component="li"
+                          variant="body1"
+                          sx={{ mb: 1.5 }}
+                        >
+                          {recommendation}
+                        </Typography>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Typography variant="body1" color="text.secondary">
+                      No recommendations available.
+                    </Typography>
+                  )}
                 </TabPanel>
               </Card>
             </>

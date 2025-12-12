@@ -41,4 +41,9 @@ public interface IJobCheckpointRepository
     /// Deletes checkpoints older than specified date
     /// </summary>
     Task DeleteOlderThanAsync(DateTime cutoffDate, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes all checkpoints for a project
+    /// </summary>
+    Task DeleteByProjectIdAsync(Guid projectId, CancellationToken cancellationToken = default);
 }

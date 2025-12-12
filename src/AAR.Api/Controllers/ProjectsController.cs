@@ -218,6 +218,29 @@ public class ProjectsController : ControllerBase
                 : BadRequest(new ErrorResponse { Error = error, TraceId = HttpContext.TraceIdentifier }));
     }
 
+    /// <summary>
+    /// Deletes a project and all associated data
+    /// </summary>
+    /// <param name="id">Project ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>No content on success</returns>
+    [HttpDelete("{id:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> DeleteProject(Guid id, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Deleting project: {ProjectId}", id);
+        
+        var result = await _projectService.DeleteProjectAsync(id, cancellationToken);
+
+        return result.Match<IActionResult>(
+            success => NoContent(),
+            error => error.Code.Contains("NotFound") 
+                ? NotFound(new ErrorResponse { Error = error, TraceId = HttpContext.TraceIdentifier })
+                : StatusCode(500, new ErrorResponse { Error = error, TraceId = HttpContext.TraceIdentifier }));
+    }
+
     private Guid? GetApiKeyId()
     {
         return HttpContext.Items.TryGetValue("ApiKeyId", out var id) && id is Guid guidId 

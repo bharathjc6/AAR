@@ -42,4 +42,14 @@ public interface IReviewFindingRepository
     /// Adds multiple findings
     /// </summary>
     Task AddRangeAsync(IEnumerable<ReviewFinding> findings, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a finding
+    /// </summary>
+    Task DeleteAsync(ReviewFinding finding, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes all findings for a project
+    /// </summary>
+    Task DeleteByProjectIdAsync(Guid projectId, CancellationToken cancellationToken = default);
 }

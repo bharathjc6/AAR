@@ -222,7 +222,7 @@ public sealed class UploadSessionService : IUploadSessionService
         _logger.LogInformation("Finalizing upload session {Session}", sessionId);
 
         // Combine parts into final file
-        var projectFolder = $"projects/{session.ApiKeyId}/{Guid.NewGuid()}";
+        const string projectsContainer = "projects";
         
         using var combinedStream = new MemoryStream();
         for (int i = 1; i <= session.TotalParts; i++)
@@ -237,14 +237,19 @@ public sealed class UploadSessionService : IUploadSessionService
         }
 
         combinedStream.Position = 0;
-        var finalPath = await _blobStorage.UploadAsync(projectFolder, session.FileName, combinedStream, "application/zip", cancellationToken);
 
-        // Create project
+        // Create project first to get the ID
         var project = Project.CreateFromZipUpload(
             session.ProjectName,
             session.FileName,
             session.ProjectDescription);
-        project.SetStoragePath(finalPath);
+
+        // Upload with the project ID as the folder
+        var blobName = $"{project.Id}/{session.FileName}";
+        await _blobStorage.UploadAsync(projectsContainer, blobName, combinedStream, "application/zip", cancellationToken);
+
+        // Store only the blob path without container prefix
+        project.SetStoragePath(blobName);
         project.SetApiKey(session.ApiKeyId);
 
         await _projectRepository.AddAsync(project, cancellationToken);

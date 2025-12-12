@@ -30,6 +30,15 @@ export type ProjectStatus =
   | 'analyzing'
   | 'completed'
   | 'failed'
+  // PascalCase variants from backend JsonStringEnumConverter
+  | 'Pending'
+  | 'Created'
+  | 'Queued'
+  | 'FilesReady'
+  | 'Analyzing'
+  | 'Completed'
+  | 'Failed'
+  // Numeric values (fallback)
   | 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface Project {
@@ -195,8 +204,13 @@ export interface UploadProgress {
 export interface ProgressUpdate {
   projectId: string;
   phase: string;
-  progress: number;
-  message: string;
+  // Backend sends progressPercent, but we also support 'progress' for compatibility
+  progressPercent?: number;
+  progress?: number;
+  message?: string;
+  currentFile?: string;
+  filesProcessed?: number;
+  totalFiles?: number;
   timestamp: string;
 }
 

@@ -92,7 +92,8 @@ public class ReportAggregator : IReportAggregator
             lowCount,
             analysisDurationSeconds);
 
-        await _unitOfWork.Reports.UpdateAsync(report, cancellationToken);
+        // No need to call UpdateAsync - the report entity is already tracked by the context
+        // since we called AddAsync above. The changes will be saved automatically.
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(

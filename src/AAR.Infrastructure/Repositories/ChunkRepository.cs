@@ -95,9 +95,20 @@ public class ChunkRepository : IChunkRepository
     /// <inheritdoc/>
     public async Task DeleteByProjectIdAsync(Guid projectId, CancellationToken cancellationToken = default)
     {
-        await _context.Chunks
-            .Where(c => c.ProjectId == projectId)
-            .ExecuteDeleteAsync(cancellationToken);
+        // ExecuteDeleteAsync is not supported by InMemory provider, use fallback for testing
+        if (_context.Database.ProviderName?.Contains("InMemory") == true)
+        {
+            var chunks = await _context.Chunks
+                .Where(c => c.ProjectId == projectId)
+                .ToListAsync(cancellationToken);
+            _context.Chunks.RemoveRange(chunks);
+        }
+        else
+        {
+            await _context.Chunks
+                .Where(c => c.ProjectId == projectId)
+                .ExecuteDeleteAsync(cancellationToken);
+        }
     }
 
     /// <inheritdoc/>
@@ -106,9 +117,20 @@ public class ChunkRepository : IChunkRepository
         string filePath, 
         CancellationToken cancellationToken = default)
     {
-        await _context.Chunks
-            .Where(c => c.ProjectId == projectId && c.FilePath == filePath)
-            .ExecuteDeleteAsync(cancellationToken);
+        // ExecuteDeleteAsync is not supported by InMemory provider, use fallback for testing
+        if (_context.Database.ProviderName?.Contains("InMemory") == true)
+        {
+            var chunks = await _context.Chunks
+                .Where(c => c.ProjectId == projectId && c.FilePath == filePath)
+                .ToListAsync(cancellationToken);
+            _context.Chunks.RemoveRange(chunks);
+        }
+        else
+        {
+            await _context.Chunks
+                .Where(c => c.ProjectId == projectId && c.FilePath == filePath)
+                .ExecuteDeleteAsync(cancellationToken);
+        }
     }
 
     /// <inheritdoc/>

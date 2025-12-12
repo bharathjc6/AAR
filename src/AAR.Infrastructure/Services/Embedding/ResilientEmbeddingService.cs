@@ -55,9 +55,14 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
     {
         await WaitForRateLimitAsync(EstimateTokens(text), cancellationToken);
         
+        var acquired = false;
         try
         {
-            await _rateLimiter.WaitAsync(cancellationToken);
+            acquired = await _rateLimiter.WaitAsync(TimeSpan.FromMinutes(2), cancellationToken);
+            if (!acquired)
+            {
+                _logger.LogWarning("Single embedding semaphore wait timed out. Proceeding anyway.");
+            }
             
             var result = await _pipeline.ExecuteAsync(
                 async ct => await _innerService.CreateEmbeddingAsync(text, ct),
@@ -68,7 +73,10 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
         }
         finally
         {
-            _rateLimiter.Release();
+            if (acquired)
+            {
+                _rateLimiter.Release();
+            }
         }
     }
 
@@ -83,9 +91,16 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
         var totalTokens = textList.Sum(EstimateTokens);
         await WaitForRateLimitAsync(totalTokens, cancellationToken);
 
+        var acquired = false;
         try
         {
-            await _rateLimiter.WaitAsync(cancellationToken);
+            // Use timeout-based wait to prevent indefinite blocking
+            // Don't use linked CTS as it causes cancellation issues downstream
+            acquired = await _rateLimiter.WaitAsync(TimeSpan.FromMinutes(2), cancellationToken);
+            if (!acquired)
+            {
+                _logger.LogWarning("Semaphore wait timed out after 2 minutes. Proceeding without semaphore.");
+            }
 
             var result = await _pipeline.ExecuteAsync(
                 async ct => await _innerService.CreateEmbeddingsAsync(textList, ct),
@@ -100,7 +115,10 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
         }
         finally
         {
-            _rateLimiter.Release();
+            if (acquired)
+            {
+                _rateLimiter.Release();
+            }
         }
     }
 
@@ -137,7 +155,10 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
 
     private async Task WaitForRateLimitAsync(int estimatedTokens, CancellationToken cancellationToken)
     {
-        while (true)
+        const int maxWaitIterations = 120; // Max 2 minutes of waiting (120 x 1s)
+        var waitIterations = 0;
+        
+        while (waitIterations < maxWaitIterations)
         {
             lock (_rateLock)
             {
@@ -149,30 +170,64 @@ public sealed class ResilientEmbeddingService : IEmbeddingService
                     _tokensThisPeriod = 0;
                 }
 
+                // If estimated tokens alone exceed the limit, proceed anyway after waiting for period reset
+                // This prevents infinite loops for large batches
+                if (estimatedTokens > _options.EmbeddingTokensPerMinute)
+                {
+                    _logger.LogWarning(
+                        "Batch tokens ({EstimatedTokens}) exceed per-minute limit ({Limit}). Proceeding anyway.",
+                        estimatedTokens, _options.EmbeddingTokensPerMinute);
+                    _tokensThisPeriod = estimatedTokens;
+                    return;
+                }
+                
                 // Check if we have capacity
                 if (_tokensThisPeriod + estimatedTokens <= _options.EmbeddingTokensPerMinute)
                 {
+                    // Reserve tokens upfront to prevent over-commitment
+                    _tokensThisPeriod += estimatedTokens;
                     return; // Proceed immediately
                 }
             }
 
-            // Wait and retry
-            var waitTime = TimeSpan.FromSeconds(5);
-            _logger.LogDebug(
-                "Rate limited: {Used}/{Limit} tokens/min. Waiting {Wait}s",
-                _tokensThisPeriod, _options.EmbeddingTokensPerMinute, waitTime.TotalSeconds);
+            // Calculate time until period reset for smarter waiting
+            TimeSpan waitTime;
+            lock (_rateLock)
+            {
+                var elapsed = DateTime.UtcNow - _periodStart;
+                var remainingUntilReset = TimeSpan.FromMinutes(1) - elapsed;
+                // Wait until period resets, or max 1 second if something went wrong
+                waitTime = remainingUntilReset > TimeSpan.Zero 
+                    ? TimeSpan.FromSeconds(Math.Min(remainingUntilReset.TotalSeconds + 0.5, 1))
+                    : TimeSpan.FromSeconds(1);
+            }
+
+            if (waitIterations % 10 == 0) // Log every 10 seconds
+            {
+                _logger.LogDebug(
+                    "Rate limited: {Used}/{Limit} tokens/min. Waiting {Wait:F1}s (iteration {Iteration})",
+                    _tokensThisPeriod, _options.EmbeddingTokensPerMinute, waitTime.TotalSeconds, waitIterations);
+            }
 
             await Task.Delay(waitTime, cancellationToken);
+            waitIterations++;
+        }
+        
+        // Max wait exceeded, proceed anyway to prevent deadlock
+        _logger.LogWarning(
+            "Rate limit max wait exceeded after {Iterations} iterations. Proceeding with {Tokens} tokens.",
+            waitIterations, estimatedTokens);
+        
+        lock (_rateLock)
+        {
+            _tokensThisPeriod += estimatedTokens;
         }
     }
 
     private void RecordTokenUsage(int tokens)
     {
-        lock (_rateLock)
-        {
-            _tokensThisPeriod += tokens;
-        }
-
+        // Note: Tokens are already reserved upfront in WaitForRateLimitAsync
+        // This method only records metrics
         _metrics.RecordTokensConsumed(ModelName, tokens, "system");
     }
 

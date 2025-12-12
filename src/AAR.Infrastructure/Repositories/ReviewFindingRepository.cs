@@ -86,4 +86,25 @@ public class ReviewFindingRepository : IReviewFindingRepository
     {
         await _context.ReviewFindings.AddRangeAsync(findings, cancellationToken);
     }
+
+    /// <inheritdoc/>
+    public Task DeleteAsync(
+        ReviewFinding finding,
+        CancellationToken cancellationToken = default)
+    {
+        _context.ReviewFindings.Remove(finding);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public async Task DeleteByProjectIdAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        var findings = await _context.ReviewFindings
+            .Where(f => f.ProjectId == projectId)
+            .ToListAsync(cancellationToken);
+        
+        _context.ReviewFindings.RemoveRange(findings);
+    }
 }

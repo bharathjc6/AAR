@@ -5,6 +5,7 @@ import {
   PaginationParams,
   CreateProjectFromGitRequest,
   UploadProgress,
+  Project,
 } from '../types';
 
 // Query keys for cache management
@@ -37,12 +38,18 @@ export function useProject(projectId: string, options?: { enabled?: boolean }) {
     queryKey: projectKeys.detail(projectId),
     queryFn: () => projectsApi.get(projectId),
     enabled: options?.enabled !== false && !!projectId,
-    staleTime: 1000 * 30, // 30 seconds
+    staleTime: 1000 * 5, // 5 seconds - shorter to pick up status changes faster
     refetchInterval: (query) => {
-      // Auto-refetch while analyzing
+      // Auto-refetch while queued or analyzing
       const status = query.state.data?.status;
-      if (status === 3 || status === 4 || status === 'analyzing') {
-        return 3000; // 3 seconds
+      // Handle both numeric and string (lowercase/PascalCase) status values
+      const normalizedStatus = typeof status === 'number' 
+        ? status 
+        : String(status).toLowerCase();
+      
+      if (normalizedStatus === 3 || normalizedStatus === 4 || 
+          normalizedStatus === 'queued' || normalizedStatus === 'analyzing') {
+        return 2000; // 2 seconds while analyzing
       }
       return false;
     },
@@ -118,13 +125,32 @@ export function useStartAnalysis() {
 
   return useMutation({
     mutationFn: (projectId: string) => projectsApi.startAnalysis(projectId),
+    onMutate: async (projectId) => {
+      // Cancel any outgoing refetches so they don't overwrite our optimistic update
+      await queryClient.cancelQueries({ queryKey: projectKeys.detail(projectId) });
+      
+      // Snapshot the previous value
+      const previousProject = queryClient.getQueryData(projectKeys.detail(projectId));
+      
+      // Optimistically update to "Analyzing" status
+      queryClient.setQueryData(projectKeys.detail(projectId), (old: Project | undefined) => {
+        if (!old) return old;
+        return { ...old, status: 'Analyzing' };
+      });
+      
+      return { previousProject };
+    },
     onSuccess: (data, projectId) => {
-      // Update the project in cache
-      queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
-      queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+      // Force immediate refetch to get the actual status from server
+      queryClient.refetchQueries({ queryKey: projectKeys.detail(projectId) });
+      queryClient.refetchQueries({ queryKey: projectKeys.lists() });
       enqueueSnackbar('Analysis started successfully', { variant: 'success' });
     },
-    onError: (error: Error) => {
+    onError: (error: Error, projectId, context) => {
+      // Rollback to previous value on error
+      if (context?.previousProject) {
+        queryClient.setQueryData(projectKeys.detail(projectId), context.previousProject);
+      }
       enqueueSnackbar(error.message || 'Failed to start analysis', { variant: 'error' });
     },
   });

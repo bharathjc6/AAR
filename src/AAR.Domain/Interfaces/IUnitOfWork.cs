@@ -39,11 +39,21 @@ public interface IUnitOfWork : IDisposable
     /// Chunk repository for vector storage
     /// </summary>
     IChunkRepository Chunks { get; }
+
+    /// <summary>
+    /// Job checkpoint repository for resumable job state
+    /// </summary>
+    IJobCheckpointRepository JobCheckpoints { get; }
     
     /// <summary>
     /// Saves all changes to the database
     /// </summary>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Clears the change tracker to free memory (useful for bulk operations)
+    /// </summary>
+    void ClearChangeTracker();
     
     /// <summary>
     /// Begins a new transaction
@@ -59,4 +69,16 @@ public interface IUnitOfWork : IDisposable
     /// Rolls back the current transaction
     /// </summary>
     Task RollbackTransactionAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Executes an operation within an execution strategy and transaction.
+    /// This is required when using SqlServerRetryingExecutionStrategy.
+    /// </summary>
+    /// <typeparam name="TResult">The result type</typeparam>
+    /// <param name="operation">The operation to execute</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The result of the operation</returns>
+    Task<TResult> ExecuteInTransactionAsync<TResult>(
+        Func<CancellationToken, Task<TResult>> operation,
+        CancellationToken cancellationToken = default);
 }

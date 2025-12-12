@@ -16,13 +16,35 @@ interface StatusBadgeProps extends Omit<ChipProps, 'color' | 'icon' | 'label'> {
 }
 
 /**
+ * Normalize status to lowercase string for comparison
+ */
+const normalizeStatus = (status: ProjectStatus): string => {
+  if (typeof status === 'number') {
+    // Map numeric values to status strings
+    const numericMap: Record<number, string> = {
+      0: 'pending',
+      1: 'created',
+      2: 'filesready',
+      3: 'queued',
+      4: 'analyzing',
+      5: 'completed',
+      6: 'failed',
+    };
+    return numericMap[status] || 'unknown';
+  }
+  return String(status).toLowerCase();
+};
+
+/**
  * Status badge component for displaying project status
  */
 export default function StatusBadge({ status, showIcon = true, ...props }: StatusBadgeProps) {
   const getStatusConfig = (status: ProjectStatus) => {
-    switch (status) {
+    const normalized = normalizeStatus(status);
+    
+    switch (normalized) {
       case 'pending':
-      case 0:
+      case 'created':
         return {
           label: 'Pending',
           color: statusColors.pending.main,
@@ -30,15 +52,13 @@ export default function StatusBadge({ status, showIcon = true, ...props }: Statu
           icon: <ScheduleIcon fontSize="small" />,
         };
       case 'queued':
-      case 1:
         return {
           label: 'Queued',
           color: statusColors.queued.main,
           bgColor: statusColors.queued.light,
           icon: <QueuedIcon fontSize="small" />,
         };
-      case 'filesReady':
-      case 2:
+      case 'filesready':
         return {
           label: 'Files Ready',
           color: statusColors.processing.main,
@@ -46,8 +66,6 @@ export default function StatusBadge({ status, showIcon = true, ...props }: Statu
           icon: <PlayIcon fontSize="small" />,
         };
       case 'analyzing':
-      case 3:
-      case 4:
         return {
           label: 'Analyzing',
           color: statusColors.analyzing.main,
@@ -55,7 +73,6 @@ export default function StatusBadge({ status, showIcon = true, ...props }: Statu
           icon: <AnalyzingIcon fontSize="small" />,
         };
       case 'completed':
-      case 5:
         return {
           label: 'Completed',
           color: statusColors.completed.main,
@@ -63,7 +80,6 @@ export default function StatusBadge({ status, showIcon = true, ...props }: Statu
           icon: <CheckIcon fontSize="small" />,
         };
       case 'failed':
-      case 6:
         return {
           label: 'Failed',
           color: statusColors.failed.main,

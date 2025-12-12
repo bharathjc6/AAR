@@ -72,4 +72,13 @@ public sealed class JobCheckpointRepository : IJobCheckpointRepository
 
         _context.Set<JobCheckpoint>().RemoveRange(oldCheckpoints);
     }
+
+    public async Task DeleteByProjectIdAsync(Guid projectId, CancellationToken cancellationToken = default)
+    {
+        var checkpoints = await _context.Set<JobCheckpoint>()
+            .Where(c => c.ProjectId == projectId)
+            .ToListAsync(cancellationToken);
+
+        _context.Set<JobCheckpoint>().RemoveRange(checkpoints);
+    }
 }

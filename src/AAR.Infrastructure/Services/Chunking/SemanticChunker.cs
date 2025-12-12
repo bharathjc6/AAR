@@ -99,12 +99,25 @@ public class SemanticChunker : IChunker
 
         try
         {
-            var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
-            var root = await tree.GetRootAsync(cancellationToken);
+            // Add timeout for Roslyn parsing to prevent hanging on complex files
+            using var parseTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            parseTimeout.CancelAfter(TimeSpan.FromSeconds(30)); // 30 second timeout per file
+            
+            var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: parseTimeout.Token);
+            var root = await tree.GetRootAsync(parseTimeout.Token);
             var lines = content.Split('\n');
 
-            // Extract semantic units
-            var semanticUnits = ExtractSemanticUnits(root, lines);
+            // Extract semantic units (synchronous, so wrap with Task.Run for timeout)
+            List<SemanticUnit> semanticUnits;
+            try
+            {
+                semanticUnits = await Task.Run(() => ExtractSemanticUnits(root, lines), parseTimeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("Roslyn parsing timed out for {FilePath}, using sliding window", filePath);
+                return ChunkWithSlidingWindow(filePath, content, projectId, "csharp");
+            }
 
             foreach (var unit in semanticUnits)
             {

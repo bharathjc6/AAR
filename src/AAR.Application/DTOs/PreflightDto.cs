@@ -100,6 +100,33 @@ public record PreflightResponse
     /// Size limits that apply
     /// </summary>
     public PreflightLimits Limits { get; init; } = new();
+
+    // === RAG Routing Breakdown (new) ===
+
+    /// <summary>
+    /// Count of files that will be sent directly to LLM (small files)
+    /// </summary>
+    public int DirectSendCount { get; init; }
+
+    /// <summary>
+    /// Count of files that will use RAG chunking
+    /// </summary>
+    public int RagChunkCount { get; init; }
+
+    /// <summary>
+    /// Count of files that will be skipped (too large or binary)
+    /// </summary>
+    public int SkippedCount { get; init; }
+
+    /// <summary>
+    /// List of skipped files with reasons (up to 50)
+    /// </summary>
+    public List<SkippedFileInfo> SkippedFiles { get; init; } = new();
+
+    /// <summary>
+    /// Breakdown by file extension
+    /// </summary>
+    public Dictionary<string, int> FileTypeBreakdown { get; init; } = new();
 }
 
 /// <summary>

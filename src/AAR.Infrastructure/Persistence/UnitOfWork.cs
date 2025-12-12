@@ -24,6 +24,7 @@ public class UnitOfWork : IUnitOfWork
     private IReviewFindingRepository? _reviewFindings;
     private IApiKeyRepository? _apiKeys;
     private IChunkRepository? _chunks;
+    private IJobCheckpointRepository? _jobCheckpoints;
 
     public UnitOfWork(AarDbContext context)
     {
@@ -55,9 +56,19 @@ public class UnitOfWork : IUnitOfWork
         _chunks ??= new ChunkRepository(_context);
 
     /// <inheritdoc/>
+    public IJobCheckpointRepository JobCheckpoints => 
+        _jobCheckpoints ??= new JobCheckpointRepository(_context);
+
+    /// <inheritdoc/>
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         return await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public void ClearChangeTracker()
+    {
+        _context.ChangeTracker.Clear();
     }
 
     /// <inheritdoc/>
@@ -108,6 +119,38 @@ public class UnitOfWork : IUnitOfWork
             await _currentTransaction.DisposeAsync();
             _currentTransaction = null;
         }
+    }
+
+    /// <inheritdoc/>
+    public async Task<TResult> ExecuteInTransactionAsync<TResult>(
+        Func<CancellationToken, Task<TResult>> operation,
+        CancellationToken cancellationToken = default)
+    {
+        // Get the execution strategy from the database
+        var strategy = _context.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(
+            state: operation,
+            operation: async (context, op, ct) =>
+            {
+                // Start a transaction within the execution strategy
+                await using var transaction = await context.Database.BeginTransactionAsync(ct);
+                
+                try
+                {
+                    var result = await op(ct);
+                    await context.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    return result;
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(ct);
+                    throw;
+                }
+            },
+            verifySucceeded: null,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
