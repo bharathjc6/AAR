@@ -44,6 +44,7 @@ public class ReportAggregator : IReportAggregator
         // Collect all findings
         var findings = new List<ReviewFinding>();
         var allRecommendations = new List<string>();
+        var skippedFindings = new List<string>();
 
         foreach (var (agentType, response) in agentResponses)
         {
@@ -54,6 +55,19 @@ public class ReportAggregator : IReportAggregator
 
             foreach (var finding in response.Findings)
             {
+                // Enforce evidence-first contract: require a file path and either a line range or a symbol
+                var hasFile = !string.IsNullOrWhiteSpace(finding.FilePath);
+                var hasSymbol = !string.IsNullOrWhiteSpace(finding.Symbol);
+                var hasLineRange = finding.LineRange is not null && finding.LineRange.Start > 0;
+
+                if (!hasFile || (!hasSymbol && !hasLineRange))
+                {
+                    _logger.LogWarning("Skipping finding from {AgentType} due to missing evidence: {Description}",
+                        agentType, finding.Description);
+                    skippedFindings.Add($"{agentType}: {finding.Description}");
+                    continue;
+                }
+
                 var reviewFinding = MapToReviewFinding(projectId, report.Id, agentType, finding);
                 findings.Add(reviewFinding);
             }
@@ -73,8 +87,8 @@ public class ReportAggregator : IReportAggregator
         // Calculate health score (simple algorithm)
         var healthScore = CalculateHealthScore(highCount, mediumCount, lowCount);
 
-        // Generate summary
-        var summary = GenerateSummary(agentResponses, findings, healthScore);
+        // Generate summary (include skipped findings info)
+        var summary = GenerateSummary(agentResponses, findings, healthScore, skippedFindings);
 
         // Deduplicate and limit recommendations
         var uniqueRecommendations = allRecommendations
@@ -159,13 +173,16 @@ public class ReportAggregator : IReportAggregator
             lineRange,
             finding.SuggestedFix,
             finding.FixedCodeSnippet,
-            finding.OriginalCodeSnippet);
+            finding.OriginalCodeSnippet,
+            finding.Symbol,
+            finding.Confidence);
     }
 
     private static string GenerateSummary(
         IDictionary<AgentType, AgentAnalysisResponse> responses,
         List<ReviewFinding> findings,
-        int healthScore)
+        int healthScore,
+        List<string> skippedFindings)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -199,6 +216,21 @@ public class ReportAggregator : IReportAggregator
             if (!string.IsNullOrEmpty(response.Summary))
             {
                 sb.AppendLine($"**{agentType} Analysis**: {response.Summary}");
+            }
+        }
+
+        // Note skipped findings due to missing evidence
+        if (skippedFindings != null && skippedFindings.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("What was not reviewed due to missing evidence:");
+            foreach (var s in skippedFindings.Take(20))
+            {
+                sb.AppendLine($"- {s}");
+            }
+            if (skippedFindings.Count > 20)
+            {
+                sb.AppendLine($"- And {skippedFindings.Count - 20} more skipped findings...");
             }
         }
 

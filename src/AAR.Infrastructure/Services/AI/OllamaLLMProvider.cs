@@ -42,11 +42,15 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
         _pipeline = pipelineProvider.GetPipeline("LLMProvider");
         _logger = logger;
 
-        // Configure base URL
+        // Configure base URL.
+        // Do NOT set an HttpClient-level timeout here - rely on the Polly resilience
+        // pipeline (which has a longer, configurable timeout) to control request
+        // timeouts. Setting HttpClient.Timeout can abort the underlying socket and
+        // interfere with the pipeline's retry/timeout behavior.
         _httpClient.BaseAddress = new Uri(_options.OllamaUrl);
-        _httpClient.Timeout = TimeSpan.FromSeconds(_options.TimeoutSeconds);
+        _httpClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
 
-        _logger.LogInformation("OllamaLLMProvider initialized with model: {Model} at {Url}", 
+        _logger.LogInformation("OllamaLLMProvider initialized with model: {Model} at {Url}. Using resilience pipeline for timeouts.", 
             _options.LLMModel, _options.OllamaUrl);
     }
 
@@ -121,10 +125,17 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
         }
         catch (TaskCanceledException)
         {
-            _logger.LogError("LLM request timed out after {Timeout}s", _options.TimeoutSeconds);
+            _logger.LogError("LLM request timed out or was cancelled (TaskCanceledException)");
             return Result<LLMResponse>.Failure(new Error(
                 "LLM.Timeout",
-                $"Request timed out after {_options.TimeoutSeconds} seconds"));
+                "Request timed out or was cancelled"));
+        }
+        catch (Polly.Timeout.TimeoutRejectedException tex)
+        {
+            _logger.LogError(tex, "LLM request timed out by resilience pipeline");
+            return Result<LLMResponse>.Failure(new Error(
+                "LLM.Timeout",
+                "Request timed out by resilience pipeline"));
         }
         catch (Exception ex)
         {
@@ -237,6 +248,13 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
             return Result<LLMResponse>.Failure(new Error(
                 "LLM.Cancelled",
                 "Request was cancelled"));
+        }
+        catch (Polly.Timeout.TimeoutRejectedException tex)
+        {
+            _logger.LogError(tex, "Streaming LLM request timed out by resilience pipeline");
+            return Result<LLMResponse>.Failure(new Error(
+                "LLM.Timeout",
+                "Streaming request timed out by resilience pipeline"));
         }
         catch (Exception ex)
         {

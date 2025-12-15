@@ -11,6 +11,8 @@ using AAR.Domain.Entities;
 using AAR.Domain.Enums;
 using AAR.Domain.Interfaces;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using AAR.Application.Configuration;
 
 namespace AAR.Worker.Agents;
 
@@ -26,12 +28,14 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
     private readonly IMemoryMonitor _memoryMonitor;
     private readonly IJobProgressService _progressService;
     private readonly ILogger<RagAwareAgentOrchestrator> _logger;
+    private readonly AgentGuardrailOptions _guardrailOptions;
 
     public RagAwareAgentOrchestrator(
         IEnumerable<IAnalysisAgent> agents,
         IRetrievalOrchestrator retrievalOrchestrator,
         IUnitOfWork unitOfWork,
         IReportAggregator reportAggregator,
+        IOptions<AgentGuardrailOptions> guardrailOptions,
         IMemoryMonitor memoryMonitor,
         IJobProgressService progressService,
         ILogger<RagAwareAgentOrchestrator> logger)
@@ -43,6 +47,7 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
         _memoryMonitor = memoryMonitor;
         _progressService = progressService;
         _logger = logger;
+        _guardrailOptions = guardrailOptions?.Value ?? new AgentGuardrailOptions();
     }
 
     /// <inheritdoc/>
@@ -77,11 +82,14 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
             try
             {
                 var findings = await agent.AnalyzeAsync(projectId, workingDirectory, cancellationToken);
-                allFindings.AddRange(findings);
+
+                // Apply guardrails for this agent
+                var filtered = AgentOrchestrator_ApplyGuardrails(agent.AgentType.ToString(), findings, _guardrailOptions);
+                allFindings.AddRange(filtered);
 
                 agentResponses[agent.AgentType] = new AgentAnalysisResponse
                 {
-                    Findings = findings.Select(f => new AgentFinding
+                    Findings = filtered.Select(f => new AgentFinding
                     {
                         Id = f.Id.ToString(),
                         Description = f.Description,
@@ -89,10 +97,12 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
                         Severity = f.Severity.ToString(),
                         Category = f.Category.ToString(),
                         FilePath = f.FilePath,
-                        SuggestedFix = f.SuggestedFix
+                        SuggestedFix = f.SuggestedFix,
+                        Symbol = f.Symbol,
+                        Confidence = f.Confidence
                     }).ToList(),
-                    Summary = $"{agent.AgentType} found {findings.Count} issues",
-                    Recommendations = GenerateRecommendationsFromFindings(agent.AgentType, findings)
+                    Summary = $"{agent.AgentType} found {filtered.Count} issues",
+                    Recommendations = GenerateRecommendationsFromFindings(agent.AgentType, filtered)
                 };
             }
             catch (Exception ex)
@@ -174,11 +184,15 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
                     plan.ProjectId, plan.WorkingDirectory, cancellationToken);
 
                 agentStopwatch.Stop();
-                allFindings.AddRange(findings);
+
+                // Apply guardrails to findings produced under the routing plan
+                var filtered = AgentOrchestrator_ApplyGuardrails(agent.AgentType.ToString(), findings, _guardrailOptions);
+
+                allFindings.AddRange(filtered);
 
                 agentResponses[agent.AgentType] = new AgentAnalysisResponse
                 {
-                    Findings = findings.Select(f => new AgentFinding
+                    Findings = filtered.Select(f => new AgentFinding
                     {
                         Id = f.Id.ToString(),
                         Description = f.Description,
@@ -188,21 +202,21 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
                         FilePath = f.FilePath,
                         SuggestedFix = f.SuggestedFix
                     }).ToList(),
-                    Summary = $"{agent.AgentType} found {findings.Count} issues",
-                    Recommendations = GenerateRecommendationsFromFindings(agent.AgentType, findings)
+                    Summary = $"{agent.AgentType} found {filtered.Count} issues",
+                    Recommendations = GenerateRecommendationsFromFindings(agent.AgentType, filtered)
                 };
 
                 _logger.LogInformation(
                     "{AgentType} completed: {FindingsCount} findings in {Duration}ms",
                     agent.AgentType, findings.Count, agentStopwatch.ElapsedMilliseconds);
 
-                // Report progress
+                // Report progress with correct agent type
                 await _progressService.ReportProgressAsync(new JobProgressUpdate
                 {
                     ProjectId = plan.ProjectId,
                     Phase = "Analyzing",
                     ProgressPercent = 40 + (int)(40.0 * processedFiles / Math.Max(1, totalFiles)),
-                    CurrentFile = $"Agent: {agent.AgentType}",
+                    CurrentFile = agent.AgentType.ToString(),
                     FilesProcessed = processedFiles,
                     TotalFiles = totalFiles
                 }, cancellationToken);
@@ -414,5 +428,36 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
             recommendations.Add($"No issues found by {agentType} agent. Keep up the good work!");
 
         return recommendations.Take(5).ToList(); // Limit to 5 recommendations per agent
+    }
+
+    private static List<ReviewFinding> AgentOrchestrator_ApplyGuardrails(string agentName, List<ReviewFinding> findings, AgentGuardrailOptions options)
+    {
+        if (findings == null || findings.Count == 0) return new List<ReviewFinding>();
+
+        options = options ?? new AgentGuardrailOptions();
+
+        if (!options.AgentLimits.TryGetValue(agentName, out var limits))
+        {
+            return findings;
+        }
+
+        var filtered = findings.Where(f => f.Confidence >= limits.MinConfidence).ToList();
+
+        if (limits.AllowedCategories != null && limits.AllowedCategories.Count > 0)
+        {
+            filtered = filtered.Where(f => limits.AllowedCategories.Contains(f.Category)).ToList();
+        }
+
+        var deduped = filtered
+            .GroupBy(f => (f.FilePath ?? string.Empty, f.Symbol ?? string.Empty, f.Description ?? string.Empty))
+            .Select(g => g.OrderByDescending(x => x.Confidence).First())
+            .ToList();
+
+        if (limits.MaxFindings > 0 && deduped.Count > limits.MaxFindings)
+        {
+            deduped = deduped.OrderByDescending(f => f.Confidence).Take(limits.MaxFindings).ToList();
+        }
+
+        return deduped;
     }
 }

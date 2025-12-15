@@ -57,6 +57,21 @@ public class QdrantVectorStore : IVectorStore, IDisposable
     {
         await EnsureCollectionExistsAsync(cancellationToken);
 
+        // Validate vector
+        if (vector == null || vector.Length == 0)
+        {
+            _logger.LogError("Vector for chunk {ChunkId} is null or empty", chunkId);
+            throw new ArgumentException($"Vector for chunk {chunkId} cannot be null or empty", nameof(vector));
+        }
+
+        if (vector.Length != _options.Dimension)
+        {
+            _logger.LogError("Vector for chunk {ChunkId} has dimension {ActualDim}, expected {ExpectedDim}",
+                chunkId, vector.Length, _options.Dimension);
+            throw new ArgumentException($"Vector dimension {vector.Length} does not match configured dimension {_options.Dimension}", 
+                nameof(vector));
+        }
+
         try
         {
             var point = new QdrantPoint
@@ -106,15 +121,53 @@ public class QdrantVectorStore : IVectorStore, IDisposable
 
         try
         {
+            // Validate all vectors before indexing (dimension check)
+            var invalidVectors = new List<int>();
+            for (int i = 0; i < vectorList.Count; i++)
+            {
+                var v = vectorList[i];
+                if (v.vector == null || v.vector.Length == 0)
+                {
+                    invalidVectors.Add(i);
+                    _logger.LogWarning("Vector {Index} ({ChunkId}) is null or empty", i, v.chunkId);
+                }
+                else if (v.vector.Length != _options.Dimension)
+                {
+                    invalidVectors.Add(i);
+                    _logger.LogWarning("Vector {Index} ({ChunkId}) has dimension {ActualDim}, expected {ExpectedDim}",
+                        i, v.chunkId, v.vector.Length, _options.Dimension);
+                }
+            }
+
+            if (invalidVectors.Count > 0)
+            {
+                _logger.LogError("Found {Count} invalid vectors out of {Total}. Skipping invalid vectors.",
+                    invalidVectors.Count, vectorList.Count);
+                
+                // Remove invalid vectors from the list (process in reverse to maintain indices)
+                foreach (var idx in invalidVectors.OrderByDescending(x => x))
+                {
+                    vectorList.RemoveAt(idx);
+                }
+
+                if (vectorList.Count == 0)
+                {
+                    _logger.LogWarning("All vectors were invalid; no vectors indexed");
+                    return;
+                }
+            }
+
             // Qdrant can handle large batches, but we'll batch at 100 for safety
             const int batchSize = 100;
             var batches = vectorList.Chunk(batchSize).ToList();
 
-            _logger.LogInformation("Indexing {Count} vectors in {Batches} batches", 
-                vectorList.Count, batches.Count);
+            _logger.LogInformation("Indexing {Count} vectors in {Batches} batches (dimension: {Dimension}D)", 
+                vectorList.Count, batches.Count, _options.Dimension);
 
+            int batchNumber = 0;
             foreach (var batch in batches)
             {
+                batchNumber++;
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var points = batch.Select(v => new QdrantPoint
@@ -135,12 +188,31 @@ public class QdrantVectorStore : IVectorStore, IDisposable
 
                 var request = new QdrantUpsertRequest { Points = points };
 
-                var response = await _httpClient.PutAsJsonAsync(
-                    $"/collections/{_collectionName}/points",
-                    request,
-                    cancellationToken);
+                try
+                {
+                    var response = await _httpClient.PutAsJsonAsync(
+                        $"/collections/{_collectionName}/points",
+                        request,
+                        cancellationToken);
 
-                response.EnsureSuccessStatusCode();
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                        _logger.LogError("Qdrant returned {StatusCode}: {Error}", 
+                            response.StatusCode, errorContent);
+                        response.EnsureSuccessStatusCode();
+                    }
+
+                    _logger.LogDebug("Successfully indexed batch {Number}/{Total} ({Count} vectors)",
+                        batchNumber, batches.Count, batch.Length);
+                }
+                catch (HttpRequestException ex)
+                {
+                    _logger.LogError(ex, "Failed to index batch {Number}/{Total} ({Count} vectors). " +
+                        "Likely causes: vector dimension mismatch ({ConfiguredDim}D), invalid payload, or Qdrant server error",
+                        batchNumber, batches.Count, batch.Length, _options.Dimension);
+                    throw;
+                }
             }
 
             _logger.LogInformation("Successfully indexed {Count} vectors", vectorList.Count);

@@ -3,6 +3,7 @@ using System.Text.Json;
 using AAR.Application.Interfaces;
 using AAR.Domain.Entities;
 using AAR.Domain.Enums;
+using AAR.Domain.ValueObjects;
 using Microsoft.Extensions.Logging;
 
 namespace AAR.Worker.Agents;
@@ -108,28 +109,29 @@ public class StructureAgent : BaseAgent
 
     private string BuildAnalysisPrompt(string structure, string workingDirectory)
     {
-        return $@"Analyze the following project structure for a code repository.
-Identify issues with:
-1. Folder organization and naming
-2. File naming conventions
-3. Project/module structure
-4. Separation of concerns
-5. Missing common directories (tests, docs, etc.)
+                return $@"Analyze the following project structure for a code repository and provide only evidence-backed findings.
+                Each finding MUST include either a `filePath` or a `symbol` and a `confidence` score between 0.0 and 1.0. Do not emit findings without verifiable evidence.
 
-Project Structure:
-{structure}
+                Project Structure:
+                {structure}
 
-Respond with a JSON array of findings:
-[
-  {{
-    ""title"": ""Issue title"",
-    ""description"": ""Detailed description"",
-    ""severity"": ""Critical|High|Medium|Low|Info"",
-    ""suggestion"": ""How to fix""
-  }}
-]
+                Respond with a JSON array of findings using this schema:
+                [
+                    {{
+                        ""id"": ""unique-id"",
+                        ""description"": ""Detailed description of the issue"",
+                        ""explanation"": ""Evidence citation including file:line if applicable"",
+                        ""severity"": ""Critical|High|Medium|Low|Info"",
+                        ""category"": ""Structure"",
+                        ""filePath"": ""relative/path/if/applicable"",
+                        ""lineRange"": {{ ""start"": 10, ""end"": 12 }},
+                        ""symbol"": ""Namespace.Class.Member"",
+                        ""confidence"": 0.87,
+                        ""suggestedFix"": ""How to fix or improve""
+                    }}
+                ]
 
-Only respond with the JSON array, no other text.";
+                Only output the JSON array. If no findings, output [].";
     }
 
     private List<ReviewFinding> ParseAiResponse(Guid projectId, string response)
@@ -156,15 +158,44 @@ Only respond with the JSON array, no other text.";
                     {
                         var severity = Enum.TryParse<Severity>(f.Severity, ignoreCase: true, out var s) 
                             ? s : Severity.Info;
-                        
-                        findings.Add(CreateFinding(
-                            projectId,
-                            f.Title ?? "Structure Finding",
-                            f.Description ?? "",
-                            severity,
-                            FindingCategory.Structure,
-                            suggestion: f.Suggestion
-                        ));
+
+                        LineRange? lineRange = null;
+                        if (f.LineRange is not null && f.LineRange.Start > 0)
+                        {
+                            lineRange = new LineRange(f.LineRange.Start, f.LineRange.End > 0 ? f.LineRange.End : f.LineRange.Start);
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(f.FilePath) || !string.IsNullOrWhiteSpace(f.Symbol))
+                        {
+                            findings.Add(ReviewFinding.Create(
+                                projectId: projectId,
+                                reportId: Guid.Empty,
+                                agentType: AgentType,
+                                category: FindingCategory.Structure,
+                                severity: severity,
+                                description: f.Title ?? "Structure Finding",
+                                explanation: f.Explanation ?? f.Description ?? "",
+                                filePath: f.FilePath,
+                                fileRecordId: null,
+                                lineRange: lineRange,
+                                suggestedFix: f.SuggestedFix,
+                                fixedCodeSnippet: f.FixedCodeSnippet,
+                                originalCodeSnippet: f.OriginalCodeSnippet,
+                                symbol: f.Symbol,
+                                confidence: f.Confidence)
+                            );
+                        }
+                        else
+                        {
+                            findings.Add(CreateFinding(
+                                projectId,
+                                f.Title ?? "Structure Finding",
+                                f.Description ?? f.Explanation ?? "",
+                                severity,
+                                FindingCategory.Structure,
+                                suggestion: f.SuggestedFix
+                            ));
+                        }
                     }
                 }
             }
@@ -294,9 +325,24 @@ Only respond with the JSON array, no other text.";
 
     private class AiFinding
     {
+        public string? Id { get; set; }
         public string? Title { get; set; }
         public string? Description { get; set; }
+        public string? Explanation { get; set; }
         public string? Severity { get; set; }
-        public string? Suggestion { get; set; }
+        public string? Category { get; set; }
+        public string? FilePath { get; set; }
+        public AiLineRange? LineRange { get; set; }
+        public string? Symbol { get; set; }
+        public double Confidence { get; set; }
+        public string? SuggestedFix { get; set; }
+        public string? FixedCodeSnippet { get; set; }
+        public string? OriginalCodeSnippet { get; set; }
+    }
+
+    private class AiLineRange
+    {
+        public int Start { get; set; }
+        public int End { get; set; }
     }
 }

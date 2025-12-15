@@ -43,19 +43,26 @@ Your task is to analyze code for quality issues including:
 
 ## Output Format
 
-Respond with a JSON array of findings:
+Respond with a JSON array of findings. Each finding MUST include either a `filePath` or a `symbol` (identifier), and a `confidence` score between 0.0 and 1.0. If you cannot provide evidence for a finding, do NOT emit it.
+
+Schema (required fields shown):
 ```json
 [
   {
-    "title": "Brief issue title",
+    "id": "unique-id",
     "description": "Detailed description of the code quality issue",
+    "explanation": "Why this is an issue and evidence citation",
     "severity": "Critical|High|Medium|Low|Info",
-    "lineNumber": 123,
-    "codeSnippet": "The problematic code",
-    "suggestion": "How to fix or refactor"
+    "category": "CodeQuality",
+    "filePath": "relative/path/to/file.cs",
+    "lineRange": { "start": 45, "end": 60 },
+    "symbol": "Namespace.Class.Method",
+    "confidence": 0.92,
+    "codeSnippet": "relevant code",
+    "suggestedFix": "How to fix or refactor",
+    "fixedCodeSnippet": "optional fixed code"
   }
 ]
 ```
 
-Prioritize issues by impact. Include specific line numbers when possible.
-Limit to 10 most significant findings per file.
+Include exact evidence in `explanation` (file path and line numbers) and keep output limited to the most important issues (max 5 per file in sampled files).

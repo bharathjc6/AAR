@@ -109,6 +109,9 @@ public abstract class BaseAgent : IAnalysisAgent
             filePath: filePath,
             lineRange: lineRange,
             suggestedFix: suggestion,
-            originalCodeSnippet: codeSnippet);
+            fixedCodeSnippet: null,
+            originalCodeSnippet: codeSnippet,
+            symbol: null,
+            confidence: 0.0);
     }
 }

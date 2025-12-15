@@ -412,38 +412,36 @@ public class SecurityAgent : BaseAgent
     {
         var findings = new List<ReviewFinding>();
         
-        var prompt = $@"Analyze the following code for security vulnerabilities.
-Focus on OWASP Top 10 categories:
-1. Injection (SQL, Command, LDAP, etc.)
-2. Broken Authentication
-3. Sensitive Data Exposure
-4. XML External Entities (XXE)
-5. Broken Access Control
-6. Security Misconfiguration
-7. Cross-Site Scripting (XSS)
-8. Insecure Deserialization
-9. Using Components with Known Vulnerabilities
-10. Insufficient Logging & Monitoring
+                var prompt = $@"Analyze the following code for security vulnerabilities and provide only evidence-backed findings.
+                Each finding MUST include either a `filePath` or a `symbol` and a `confidence` score between 0.0 and 1.0. Do not emit speculative findings without verifiable evidence.
 
-File: {relativePath}
+                Focus on OWASP Top 10 categories and provide concrete evidence (file:line) in the `explanation` field.
 
-```
-{content}
-```
+                File: {relativePath}
 
-Respond with a JSON array of security findings (max 5 most critical):
-[
-  {{
-    ""title"": ""Vulnerability title"",
-    ""description"": ""Detailed description of the vulnerability"",
-    ""severity"": ""Critical|High|Medium|Low|Info"",
-    ""lineNumber"": 123,
-    ""cweId"": ""CWE-XXX"",
-    ""suggestion"": ""How to remediate""
-  }}
-]
+                ```
+                {content}
+                ```
 
-Only respond with the JSON array. If no issues, respond with [].";
+                Respond with a JSON array of findings using this schema:
+                [
+                    {{
+                        ""id"": ""unique-id"",
+                        ""description"": ""Detailed description of the vulnerability"",
+                        ""explanation"": ""Evidence and rationale (file:line)"",
+                        ""severity"": ""Critical|High|Medium|Low|Info"",
+                        ""category"": ""Security"",
+                        ""cweId"": ""CWE-XXX"",
+                        ""filePath"": ""relative/path/to/file.cs"",
+                        ""lineRange"": {{ ""start"": 123, ""end"": 130 }},
+                        ""symbol"": ""Namespace.Class.Method"",
+                        ""confidence"": 0.98,
+                        ""codeSnippet"": ""The vulnerable code"",
+                        ""suggestedFix"": ""How to remediate""
+                    }}
+                ]
+
+                Only output the JSON array. If no findings, output [].";
 
         try
         {
@@ -466,27 +464,52 @@ Only respond with the JSON array. If no issues, respond with [].";
                     {
                         var severity = Enum.TryParse<Severity>(f.Severity, ignoreCase: true, out var s)
                             ? s : Severity.Medium;
-                        
-                        LineRange? lineRange = f.LineNumber > 0
-                            ? new LineRange(f.LineNumber, f.LineNumber)
-                            : null;
-                        
+
+                        LineRange? lineRange = null;
+                        if (f.LineRange is not null && f.LineRange.Start > 0)
+                        {
+                            lineRange = new LineRange(f.LineRange.Start, f.LineRange.End > 0 ? f.LineRange.End : f.LineRange.Start);
+                        }
+
                         var description = f.Description ?? "";
                         if (!string.IsNullOrEmpty(f.CweId))
                         {
                             description += $" ({f.CweId})";
                         }
-                        
-                        findings.Add(CreateFinding(
-                            projectId,
-                            f.Title ?? "Security Vulnerability",
-                            description,
-                            severity,
-                            FindingCategory.Security,
-                            filePath: relativePath,
-                            lineRange: lineRange,
-                            suggestion: f.Suggestion
-                        ));
+
+                        if (!string.IsNullOrWhiteSpace(f.FilePath) || !string.IsNullOrWhiteSpace(f.Symbol))
+                        {
+                            findings.Add(ReviewFinding.Create(
+                                projectId: projectId,
+                                reportId: Guid.Empty,
+                                agentType: AgentType,
+                                category: FindingCategory.Security,
+                                severity: severity,
+                                description: f.Title ?? "Security Vulnerability",
+                                explanation: f.Explanation ?? description,
+                                filePath: f.FilePath ?? relativePath,
+                                fileRecordId: null,
+                                lineRange: lineRange,
+                                suggestedFix: f.SuggestedFix,
+                                fixedCodeSnippet: f.FixedCodeSnippet,
+                                originalCodeSnippet: f.OriginalCodeSnippet,
+                                symbol: f.Symbol,
+                                confidence: f.Confidence)
+                            );
+                        }
+                        else
+                        {
+                            findings.Add(CreateFinding(
+                                projectId,
+                                f.Title ?? "Security Vulnerability",
+                                description,
+                                severity,
+                                FindingCategory.Security,
+                                filePath: relativePath,
+                                lineRange: lineRange,
+                                suggestion: f.SuggestedFix
+                            ));
+                        }
                     }
                 }
             }
@@ -501,11 +524,24 @@ Only respond with the JSON array. If no issues, respond with [].";
 
     private class AiFinding
     {
+        public string? Id { get; set; }
         public string? Title { get; set; }
         public string? Description { get; set; }
+        public string? Explanation { get; set; }
         public string? Severity { get; set; }
-        public int LineNumber { get; set; }
         public string? CweId { get; set; }
-        public string? Suggestion { get; set; }
+        public string? FilePath { get; set; }
+        public AiLineRange? LineRange { get; set; }
+        public string? Symbol { get; set; }
+        public double Confidence { get; set; }
+        public string? SuggestedFix { get; set; }
+        public string? FixedCodeSnippet { get; set; }
+        public string? OriginalCodeSnippet { get; set; }
+    }
+
+    private class AiLineRange
+    {
+        public int Start { get; set; }
+        public int End { get; set; }
     }
 }

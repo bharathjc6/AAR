@@ -67,23 +67,29 @@ Your task is to analyze code for security issues based on OWASP Top 10 and secur
 - Information disclosure
 
 ## Output Format
+Respond with a JSON array of findings. Each finding MUST include either a `filePath` or a `symbol` and a `confidence` score between 0.0 and 1.0. Do NOT emit findings without verifiable evidence.
 
-Respond with a JSON array of findings:
+Schema (required fields shown):
 ```json
 [
   {
-    "title": "Vulnerability title",
+    "id": "unique-id",
     "description": "Detailed description of the security issue",
+    "explanation": "Why this is a vulnerability and evidence citation (file:line)",
     "severity": "Critical|High|Medium|Low|Info",
-    "lineNumber": 123,
+    "category": "Security",
     "cweId": "CWE-XXX",
+    "filePath": "relative/path/to/file.cs",
+    "lineRange": { "start": 123, "end": 130 },
+    "symbol": "Namespace.Class.Method",
+    "confidence": 0.98,
     "codeSnippet": "The vulnerable code",
-    "suggestion": "How to remediate"
+    "suggestedFix": "How to remediate"
   }
 ]
 ```
 
-Assign severity based on exploitability and impact:
+Include exploitability notes and exact file/line evidence in `explanation`. Limit findings to verifiable vulnerabilities; avoid hypothetical issues without concrete evidence.
 - **Critical**: Easily exploitable, high impact (RCE, auth bypass)
 - **High**: Exploitable with some effort, significant impact
 - **Medium**: Requires specific conditions, moderate impact

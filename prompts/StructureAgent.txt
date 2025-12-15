@@ -35,17 +35,26 @@ Your task is to analyze the project structure and identify issues with:
 
 ## Output Format
 
-Respond with a JSON array of findings:
+Respond with a JSON array of findings. Each finding MUST include either a `filePath` or a `symbol` (identifier), and a `confidence` score between 0.0 and 1.0. If evidence is not available, do NOT emit the finding.
+
+Schema (required fields shown):
 ```json
 [
   {
-    "title": "Brief issue title",
+    "id": "unique-id",
     "description": "Detailed description of the issue",
+    "explanation": "Why this is an issue and evidence citation",
     "severity": "Critical|High|Medium|Low|Info",
+    "category": "Structure",
     "filePath": "relative/path/if/applicable",
-    "suggestion": "How to fix or improve"
+    "lineRange": { "start": 10, "end": 12 },
+    "symbol": "Namespace.Class.Member",
+    "confidence": 0.87,
+    "suggestedFix": "How to fix or improve",
+    "originalCodeSnippet": "...",
+    "fixedCodeSnippet": "..."
   }
 ]
 ```
 
-Focus on actionable findings. Limit to the 10 most important issues.
+Include short evidence snippets and exact file locations in `explanation` (e.g., "File: src/foo/bar.cs L45-L48: ..."). Limit to the 10 most important findings.

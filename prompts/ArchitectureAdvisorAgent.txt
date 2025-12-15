@@ -71,20 +71,27 @@ Your task is to analyze the overall architecture and provide strategic recommend
 
 ## Output Format
 
-Respond with a JSON array of findings:
+Respond with a JSON array of findings. Each finding MUST include either a `filePath` or a `symbol` and a `confidence` score (0.0-1.0). If evidence is not available, do NOT emit a finding. Use `explanation` to cite observed code locations.
+
+Schema (required fields shown):
 ```json
 [
   {
-    "title": "Finding title",
+    "id": "unique-id",
     "description": "Detailed explanation of the architectural concern or recommendation",
+    "explanation": "Evidence and rationale (file:line or module)",
     "severity": "Critical|High|Medium|Low|Info",
     "category": "Pattern|Scalability|Maintainability|Security|DevOps|Design",
+    "filePath": "relative/path/if_applicable",
+    "lineRange": { "start": 10, "end": 20 },
+    "symbol": "Optional.Namespace.Component",
+    "confidence": 0.75,
     "suggestion": "Specific actionable recommendation"
   }
 ]
 ```
 
-Severity Guidelines:
+Focus on high-confidence, evidence-backed architectural recommendations rather than speculative suggestions.
 - **Critical**: Fundamental architectural issues blocking scalability/maintainability
 - **High**: Significant issues requiring near-term attention
 - **Medium**: Issues that should be addressed in the roadmap

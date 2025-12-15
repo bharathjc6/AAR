@@ -4,6 +4,7 @@
 // =============================================================================
 
 using AAR.Application.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -191,23 +192,30 @@ public static class ResilienceServiceCollectionExtensions
         services.AddResiliencePipeline(ResiliencePipelineNames.LLMProvider, (builder, context) =>
         {
             var logger = context.ServiceProvider.GetRequiredService<ILogger<ResiliencePipelineBuilder>>();
+            
+            // For local LLM (Ollama), use a longer timeout since CPU inference is slow
+            // This can be configured per deployment; default is 10 minutes for CPU inference
+            var llmTimeoutMinutes = context.ServiceProvider
+                .GetRequiredService<IConfiguration>()
+                .GetValue<int>("AI:LLM:TimeoutMinutes", 10);
 
             builder
-                .AddTimeout(TimeSpan.FromMinutes(5)) // Long timeout for CPU-based LLM inference
+                .AddTimeout(TimeSpan.FromMinutes(llmTimeoutMinutes))
                 .AddRetry(new RetryStrategyOptions
                 {
-                    MaxRetryAttempts = 3,
+                    MaxRetryAttempts = 2, // Reduced from 3 to avoid cascading timeouts
                     Delay = TimeSpan.FromSeconds(2),
                     BackoffType = DelayBackoffType.Exponential,
                     UseJitter = true,
                     ShouldHandle = new PredicateBuilder()
                         .Handle<HttpRequestException>()
-                        .Handle<TimeoutRejectedException>()
+                        .Handle<TimeoutRejectedException>(ex => 
+                            !ex.Message.Contains("didn't complete")) // Don't retry actual timeouts
                         .Handle<TaskCanceledException>(ex => !ex.CancellationToken.IsCancellationRequested),
                     OnRetry = args =>
                     {
                         logger.LogWarning(
-                            "Retry {Attempt}/3 for LLM provider: {Exception}",
+                            "Retry {Attempt}/2 for LLM provider: {Exception}",
                             args.AttemptNumber,
                             args.Outcome.Exception?.Message);
                         return default;
@@ -216,15 +224,15 @@ public static class ResilienceServiceCollectionExtensions
                 .AddCircuitBreaker(new CircuitBreakerStrategyOptions
                 {
                     FailureRatio = 0.5,
-                    SamplingDuration = TimeSpan.FromMinutes(1),
-                    MinimumThroughput = 5,
-                    BreakDuration = TimeSpan.FromSeconds(30),
+                    SamplingDuration = TimeSpan.FromMinutes(2),
+                    MinimumThroughput = 3,
+                    BreakDuration = TimeSpan.FromSeconds(60),
                     ShouldHandle = new PredicateBuilder()
                         .Handle<HttpRequestException>()
                         .Handle<TimeoutRejectedException>(),
                     OnOpened = args =>
                     {
-                        logger.LogError("Circuit breaker OPENED for LLM provider");
+                        logger.LogError("Circuit breaker OPENED for LLM provider - LLM appears to be unresponsive");
                         return default;
                     },
                     OnClosed = args =>

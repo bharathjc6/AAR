@@ -12,6 +12,7 @@ using AAR.Infrastructure.Persistence;
 using AAR.Infrastructure.Repositories;
 using AAR.Infrastructure.Services;
 using AAR.Infrastructure.Services.AI;
+using AAR.Infrastructure.Services.Analysis;
 using AAR.Infrastructure.Services.Chunking;
 using AAR.Infrastructure.Services.Embedding;
 using AAR.Infrastructure.Services.Memory;
@@ -94,6 +95,10 @@ public static class DependencyInjection
 
         // RAG processing configuration
         services.Configure<RagProcessingOptions>(configuration.GetSection(RagProcessingOptions.SectionName));
+        services.Configure<AAR.Application.Configuration.AgentGuardrailOptions>(
+            configuration.GetSection(AAR.Application.Configuration.AgentGuardrailOptions.SectionName));
+        services.Configure<AAR.Application.Configuration.ClusterAnalysisOptions>(
+            configuration.GetSection(AAR.Application.Configuration.ClusterAnalysisOptions.SectionName));
         services.Configure<MemoryManagementOptions>(configuration.GetSection(MemoryManagementOptions.SectionName));
         services.Configure<ConcurrencyOptions>(configuration.GetSection(ConcurrencyOptions.SectionName));
         services.Configure<JobApprovalOptions>(configuration.GetSection(JobApprovalOptions.SectionName));
@@ -145,6 +150,10 @@ public static class DependencyInjection
         services.AddScoped<IGitService, GitService>();
         services.AddScoped<ICodeMetricsService, CodeMetricsService>();
         services.AddScoped<IPdfService, PdfService>();
+
+        // Cluster-based analysis services (Phase 1-2 of pipeline)
+        services.AddScoped<IStaticAnalyzer, StaticAnalyzer>();
+        services.AddScoped<IClusterBuilder, ClusterBuilder>();
 
         // Tokenization services
         services.Configure<TokenizerOptions>(configuration.GetSection(TokenizerOptions.SectionName));

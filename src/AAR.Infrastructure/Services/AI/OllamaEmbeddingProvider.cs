@@ -94,6 +94,20 @@ public class OllamaEmbeddingProvider : IEmbeddingProvider, IDisposable
                 return new float[Dimension];
             }
 
+            // Validate embedding dimension
+            var embeddingDim = response.Embeddings[0].Length;
+            if (embeddingDim != Dimension)
+            {
+                _logger.LogWarning("Ollama returned embedding with dimension {ActualDim}, expected {ExpectedDim}. " +
+                    "Check that model is {Model} (should have {ExpectedDim}D). Padding/truncating to match.",
+                    embeddingDim, Dimension, _options.EmbeddingModel, Dimension);
+
+                // Pad with zeros if too small, truncate if too large
+                var adjusted = new float[Dimension];
+                Array.Copy(response.Embeddings[0], adjusted, Math.Min(embeddingDim, Dimension));
+                response.Embeddings[0] = adjusted;
+            }
+
             // Normalize the embedding (use first embedding from batch)
             var normalized = Normalize(response.Embeddings[0]);
             

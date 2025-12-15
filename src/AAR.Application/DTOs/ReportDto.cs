@@ -61,6 +61,8 @@ public record FindingDto
     public string? SuggestedFix { get; init; }
     public string? FixedCodeSnippet { get; init; }
     public string? OriginalCodeSnippet { get; init; }
+    public string? Symbol { get; init; }
+    public double Confidence { get; init; }
 }
 
 /// <summary>
@@ -97,6 +99,8 @@ public record AgentFinding
     public string? SuggestedFix { get; init; }
     public string? FixedCodeSnippet { get; init; }
     public string? OriginalCodeSnippet { get; init; }
+    public string? Symbol { get; init; }
+    public double Confidence { get; init; }
 }
 
 /// <summary>

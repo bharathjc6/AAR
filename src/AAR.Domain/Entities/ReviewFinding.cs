@@ -79,6 +79,16 @@ public class ReviewFinding : BaseEntity
     public string? OriginalCodeSnippet { get; private set; }
 
     /// <summary>
+    /// Symbol or identifier the finding refers to (if applicable)
+    /// </summary>
+    public string? Symbol { get; private set; }
+
+    /// <summary>
+    /// Confidence score (0.0 - 1.0) for this finding
+    /// </summary>
+    public double Confidence { get; private set; }
+
+    /// <summary>
     /// Navigation property to file record
     /// </summary>
     public FileRecord? FileRecord { get; private set; }
@@ -107,7 +117,9 @@ public class ReviewFinding : BaseEntity
         LineRange? lineRange = null,
         string? suggestedFix = null,
         string? fixedCodeSnippet = null,
-        string? originalCodeSnippet = null)
+        string? originalCodeSnippet = null,
+        string? symbol = null,
+        double confidence = 0.0)
     {
         return new ReviewFinding
         {
@@ -123,7 +135,9 @@ public class ReviewFinding : BaseEntity
             Explanation = explanation,
             SuggestedFix = suggestedFix,
             FixedCodeSnippet = fixedCodeSnippet,
-            OriginalCodeSnippet = originalCodeSnippet
+            OriginalCodeSnippet = originalCodeSnippet,
+            Symbol = symbol,
+            Confidence = confidence
         };
     }
 }

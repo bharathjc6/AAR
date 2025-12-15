@@ -3,6 +3,7 @@ using System.Text.Json;
 using AAR.Application.Interfaces;
 using AAR.Domain.Entities;
 using AAR.Domain.Enums;
+using AAR.Domain.ValueObjects;
 using Microsoft.Extensions.Logging;
 
 namespace AAR.Worker.Agents;
@@ -252,15 +253,44 @@ Only respond with the JSON array.";
                     {
                         var severity = Enum.TryParse<Severity>(f.Severity, ignoreCase: true, out var s)
                             ? s : Severity.Info;
-                        
-                        findings.Add(CreateFinding(
-                            projectId,
-                            f.Title ?? "Architecture Finding",
-                            f.Description ?? "",
-                            severity,
-                            FindingCategory.Architecture,
-                            suggestion: f.Suggestion
-                        ));
+
+                        LineRange? lineRange = null;
+                        if (f.LineRange is not null && f.LineRange.Start > 0)
+                        {
+                            lineRange = new LineRange(f.LineRange.Start, f.LineRange.End > 0 ? f.LineRange.End : f.LineRange.Start);
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(f.FilePath) || !string.IsNullOrWhiteSpace(f.Symbol))
+                        {
+                            findings.Add(ReviewFinding.Create(
+                                projectId: projectId,
+                                reportId: Guid.Empty,
+                                agentType: AgentType,
+                                category: FindingCategory.Architecture,
+                                severity: severity,
+                                description: f.Title ?? "Architecture Finding",
+                                explanation: f.Explanation ?? f.Description ?? "",
+                                filePath: f.FilePath,
+                                fileRecordId: null,
+                                lineRange: lineRange,
+                                suggestedFix: f.SuggestedFix,
+                                fixedCodeSnippet: f.FixedCodeSnippet,
+                                originalCodeSnippet: f.OriginalCodeSnippet,
+                                symbol: f.Symbol,
+                                confidence: f.Confidence)
+                            );
+                        }
+                        else
+                        {
+                            findings.Add(CreateFinding(
+                                projectId,
+                                f.Title ?? "Architecture Finding",
+                                f.Description ?? f.Explanation ?? "",
+                                severity,
+                                FindingCategory.Architecture,
+                                suggestion: f.SuggestedFix
+                            ));
+                        }
                     }
                 }
             }
@@ -457,10 +487,24 @@ Only respond with the JSON array.";
 
     private class AiFinding
     {
+        public string? Id { get; set; }
         public string? Title { get; set; }
         public string? Description { get; set; }
+        public string? Explanation { get; set; }
         public string? Severity { get; set; }
         public string? Category { get; set; }
-        public string? Suggestion { get; set; }
+        public string? FilePath { get; set; }
+        public AiLineRange? LineRange { get; set; }
+        public string? Symbol { get; set; }
+        public double Confidence { get; set; }
+        public string? SuggestedFix { get; set; }
+        public string? FixedCodeSnippet { get; set; }
+        public string? OriginalCodeSnippet { get; set; }
+    }
+
+    private class AiLineRange
+    {
+        public int Start { get; set; }
+        public int End { get; set; }
     }
 }
