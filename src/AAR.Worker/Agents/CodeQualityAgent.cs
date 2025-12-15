@@ -438,10 +438,7 @@ Output JSON array (empty if no issues):
             if (jsonStart < 0 || jsonEnd <= jsonStart) return findings;
 
             var json = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
-            var parsed = JsonSerializer.Deserialize<List<ClusterAiFinding>>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var parsed = JsonSerializer.Deserialize<List<ClusterAiFinding>>(json, AiFindingModels.JsonOptions);
 
             if (parsed == null) return findings;
 
@@ -537,10 +534,7 @@ Only output the JSON array. If no issues, output [].";
                 
                 try
                 {
-                    var parsed = JsonSerializer.Deserialize<List<AiFinding>>(json, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
+                    var parsed = JsonSerializer.Deserialize<List<AiFinding>>(json, AiFindingModels.JsonOptions);
                     
                     if (parsed != null)
                     {
@@ -688,44 +682,5 @@ Only output the JSON array. If no issues, output [].";
         
         // Limit findings to prevent overwhelming output
         return findings.Take(50).ToList();
-    }
-
-    private class AiFinding
-    {
-        public string? Id { get; set; }
-        public string? Description { get; set; }
-        public string? Explanation { get; set; }
-        public string? Severity { get; set; }
-        public string? Category { get; set; }
-        public string? FilePath { get; set; }
-        public AiLineRange? LineRange { get; set; }
-        public string? Symbol { get; set; }
-        public double Confidence { get; set; }
-        public string? SuggestedFix { get; set; }
-        public string? CodeSnippet { get; set; }
-        public string? FixedCodeSnippet { get; set; }
-        public string? OriginalCodeSnippet { get; set; }
-        public string? Title { get; set; }
-    }
-
-    private class AiLineRange
-    {
-        public int Start { get; set; }
-        public int End { get; set; }
-    }
-
-    /// <summary>
-    /// Response model for cluster-based LLM analysis
-    /// </summary>
-    private class ClusterAiFinding
-    {
-        public string? Id { get; set; }
-        public string? Description { get; set; }
-        public string? Explanation { get; set; }
-        public string? Severity { get; set; }
-        public string? Category { get; set; }
-        public List<string>? AffectedFiles { get; set; }
-        public double Confidence { get; set; }
-        public string? SuggestedFix { get; set; }
     }
 }

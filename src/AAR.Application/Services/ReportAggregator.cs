@@ -55,14 +55,29 @@ public class ReportAggregator : IReportAggregator
 
             foreach (var finding in response.Findings)
             {
-                // Enforce evidence-first contract: require a file path and either a line range or a symbol
+                // Enforce evidence-first contract:
+                // For file-level findings: require filePath + (symbol OR lineRange)
+                // For project-level findings: allow without filePath if they have meaningful explanation
                 var hasFile = !string.IsNullOrWhiteSpace(finding.FilePath);
                 var hasSymbol = !string.IsNullOrWhiteSpace(finding.Symbol);
                 var hasLineRange = finding.LineRange is not null && finding.LineRange.Start > 0;
+                var hasExplanation = !string.IsNullOrWhiteSpace(finding.Explanation);
 
-                if (!hasFile || (!hasSymbol && !hasLineRange))
+                // Reject completely empty findings, but allow:
+                // 1. File-level: filePath + (symbol OR lineRange)
+                // 2. Project-level: no filePath, but must have explanation (e.g., "Missing test coverage")
+                if (!hasExplanation)
                 {
-                    _logger.LogWarning("Skipping finding from {AgentType} due to missing evidence: {Description}",
+                    _logger.LogWarning("Skipping finding from {AgentType} due to missing explanation: {Description}",
+                        agentType, finding.Description);
+                    skippedFindings.Add($"{agentType}: {finding.Description}");
+                    continue;
+                }
+
+                if (hasFile && !hasSymbol && !hasLineRange)
+                {
+                    _logger.LogWarning(
+                        "Skipping file-level finding from {AgentType} - file specified but no symbol or line range: {Description}",
                         agentType, finding.Description);
                     skippedFindings.Add($"{agentType}: {finding.Description}");
                     continue;

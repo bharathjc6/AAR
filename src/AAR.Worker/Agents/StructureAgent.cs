@@ -147,10 +147,7 @@ public class StructureAgent : BaseAgent
             if (jsonStart >= 0 && jsonEnd > jsonStart)
             {
                 var json = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
-                var parsed = JsonSerializer.Deserialize<List<AiFinding>>(json, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
+                var parsed = JsonSerializer.Deserialize<List<AiFinding>>(json, AiFindingModels.JsonOptions);
                 
                 if (parsed != null)
                 {
@@ -321,28 +318,5 @@ public class StructureAgent : BaseAgent
         }
         
         return findings;
-    }
-
-    private class AiFinding
-    {
-        public string? Id { get; set; }
-        public string? Title { get; set; }
-        public string? Description { get; set; }
-        public string? Explanation { get; set; }
-        public string? Severity { get; set; }
-        public string? Category { get; set; }
-        public string? FilePath { get; set; }
-        public AiLineRange? LineRange { get; set; }
-        public string? Symbol { get; set; }
-        public double Confidence { get; set; }
-        public string? SuggestedFix { get; set; }
-        public string? FixedCodeSnippet { get; set; }
-        public string? OriginalCodeSnippet { get; set; }
-    }
-
-    private class AiLineRange
-    {
-        public int Start { get; set; }
-        public int End { get; set; }
     }
 }
