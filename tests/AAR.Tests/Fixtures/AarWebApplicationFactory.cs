@@ -1,12 +1,9 @@
 // AAR.Tests - Fixtures/AarWebApplicationFactory.cs
-// Custom WebApplicationFactory for API integration testing
+// Custom WebApplicationFactory for API integration testing with local services
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using AAR.Application.Interfaces;
-using AAR.Domain.Interfaces;
 using AAR.Infrastructure.Persistence;
-using AAR.Tests.Mocks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -23,15 +20,10 @@ using ApiProgram = AAR.Api.Program;
 
 /// <summary>
 /// Custom WebApplicationFactory that configures the API for testing
-/// with mock services and in-memory database.
+/// with real Ollama and Qdrant services (no mocks).
 /// </summary>
 public class AarWebApplicationFactory : WebApplicationFactory<ApiProgram>
 {
-    public MockOpenAiService MockOpenAi { get; } = new();
-    public MockEmbeddingService MockEmbedding { get; } = new();
-    public MockBlobStorageService MockBlobStorage { get; } = new();
-    public InMemoryVectorStore MockVectorStore { get; } = new();
-
     private readonly string _databaseName = $"AarTest_{Guid.NewGuid()}";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -54,12 +46,6 @@ public class AarWebApplicationFactory : WebApplicationFactory<ApiProgram>
                 services.Remove(descriptor);
             }
 
-            // Remove real services
-            services.RemoveAll<IOpenAiService>();
-            services.RemoveAll<IEmbeddingService>();
-            services.RemoveAll<IBlobStorageService>();
-            services.RemoveAll<IVectorStore>();
-
             // Add in-memory database with transaction warning suppressed
             services.AddDbContext<AarDbContext>(options =>
             {
@@ -69,11 +55,8 @@ public class AarWebApplicationFactory : WebApplicationFactory<ApiProgram>
                     w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning));
             });
 
-            // Add mock services
-            services.AddSingleton<IOpenAiService>(MockOpenAi);
-            services.AddSingleton<IEmbeddingService>(MockEmbedding);
-            services.AddSingleton<IBlobStorageService>(MockBlobStorage);
-            services.AddSingleton<IVectorStore>(MockVectorStore);
+            // NOTE: No longer removing IOpenAiService, IEmbeddingService, IVectorStore
+            // Tests will use real Ollama and Qdrant services configured via appsettings
 
             // Suppress excessive logging during tests
             services.AddLogging(logging =>
@@ -86,14 +69,26 @@ public class AarWebApplicationFactory : WebApplicationFactory<ApiProgram>
 
         builder.ConfigureAppConfiguration((context, config) =>
         {
-            // Override configuration for testing
+            // Override configuration for testing with local services
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["KeyVault:UseKeyVault"] = "false",
+                ["KeyVault:UseMockKeyVault"] = "true",
                 ["ConnectionStrings:DefaultConnection"] = $"Data Source={_databaseName};Mode=Memory",
                 ["MassTransit:RegisterConsumers"] = "false",
                 ["Processing:MaxFileSizeKb"] = "200",
                 ["Processing:DirectSendThresholdKb"] = "10",
+                // Use local Ollama and Qdrant
+                ["AI:Provider"] = "Local",
+                ["AI:Local:OllamaUrl"] = "http://127.0.0.1:11434",
+                ["AI:Local:LLMModel"] = "qwen2.5-coder:7b",
+                ["AI:Local:EmbeddingModel"] = "bge-large:latest",
+                ["AI:Local:TimeoutSeconds"] = "120",
+                ["AI:VectorDb:Type"] = "Qdrant",
+                ["AI:VectorDb:Url"] = "http://localhost:6333",
+                ["AI:VectorDb:CollectionPrefix"] = "aar_test",
+                ["AI:VectorDb:Dimension"] = "1024",
+                ["Embedding:UseMock"] = "false",
                 // Relax upload constraints for testing
                 ["ResumableUpload:MinPartSizeBytes"] = "1024", // 1KB min for testing
                 ["ResumableUpload:MaxParts"] = "100",
@@ -134,17 +129,6 @@ public class AarWebApplicationFactory : WebApplicationFactory<ApiProgram>
             dbContext.ApiKeys.Add(testApiKey);
             await dbContext.SaveChangesAsync();
         }
-    }
-
-    /// <summary>
-    /// Reset all mocks between tests
-    /// </summary>
-    public void ResetMocks()
-    {
-        MockOpenAi.Reset();
-        MockEmbedding.Reset();
-        MockBlobStorage.Reset();
-        MockVectorStore.Reset();
     }
 
     /// <summary>

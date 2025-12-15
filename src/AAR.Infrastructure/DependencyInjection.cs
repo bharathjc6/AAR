@@ -11,6 +11,7 @@ using AAR.Infrastructure.Messaging;
 using AAR.Infrastructure.Persistence;
 using AAR.Infrastructure.Repositories;
 using AAR.Infrastructure.Services;
+using AAR.Infrastructure.Services.AI;
 using AAR.Infrastructure.Services.Chunking;
 using AAR.Infrastructure.Services.Embedding;
 using AAR.Infrastructure.Services.Memory;
@@ -141,7 +142,6 @@ public static class DependencyInjection
 
         // Other services
         services.AddSingleton<IPromptTemplateProvider, PromptTemplateProvider>();
-        services.AddScoped<IOpenAiService, AzureOpenAiService>();
         services.AddScoped<IGitService, GitService>();
         services.AddScoped<ICodeMetricsService, CodeMetricsService>();
         services.AddScoped<IPdfService, PdfService>();
@@ -154,51 +154,77 @@ public static class DependencyInjection
         services.Configure<ChunkerOptions>(configuration.GetSection(ChunkerOptions.SectionName));
         services.AddScoped<IChunker, SemanticChunker>();
 
-        // Embedding services with resilience decorator
-        services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
-        var useMockEmbedding = configuration.GetValue<bool>("Embedding:UseMock") 
-            || Environment.GetEnvironmentVariable("USE_MOCK_EMBEDDING") == "true";
+        // ===================================================================
+        // AI PROVIDER CONFIGURATION (Local/Azure)
+        // ===================================================================
+        services.Configure<AIProviderOptions>(configuration.GetSection(AIProviderOptions.SectionName));
         
-        // Register the inner embedding service
-        if (useMockEmbedding)
+        var aiProvider = configuration.GetValue<string>("AI:Provider") ?? "Local";
+        var useLocalAI = aiProvider.Equals("Local", StringComparison.OrdinalIgnoreCase);
+
+        // Configure HttpClientFactory for Ollama/Qdrant
+        services.AddHttpClient("Ollama");
+        services.AddHttpClient("Qdrant");
+
+        // Register LLM Provider
+        if (useLocalAI)
         {
-            services.AddSingleton<MockEmbeddingService>();
-            services.AddSingleton<IEmbeddingService>(sp =>
-            {
-                var inner = sp.GetRequiredService<MockEmbeddingService>();
-                var pipelineProvider = sp.GetRequiredService<ResiliencePipelineProvider<string>>();
-                var options = sp.GetRequiredService<IOptions<EmbeddingProcessingOptions>>();
-                var metrics = sp.GetRequiredService<IMetricsService>();
-                var logger = sp.GetRequiredService<ILogger<ResilientEmbeddingService>>();
-                return new ResilientEmbeddingService(inner, pipelineProvider, options, metrics, logger);
-            });
+            services.AddSingleton<ILLMProvider, OllamaLLMProvider>();
         }
         else
         {
-            services.AddSingleton<AzureOpenAiEmbeddingService>();
-            services.AddSingleton<IEmbeddingService>(sp =>
-            {
-                var inner = sp.GetRequiredService<AzureOpenAiEmbeddingService>();
-                var pipelineProvider = sp.GetRequiredService<ResiliencePipelineProvider<string>>();
-                var options = sp.GetRequiredService<IOptions<EmbeddingProcessingOptions>>();
-                var metrics = sp.GetRequiredService<IMetricsService>();
-                var logger = sp.GetRequiredService<ILogger<ResilientEmbeddingService>>();
-                return new ResilientEmbeddingService(inner, pipelineProvider, options, metrics, logger);
-            });
+            services.AddSingleton<ILLMProvider, AzureOpenAILLMProvider>();
         }
 
-        // Vector store services
-        services.Configure<VectorStoreOptions>(configuration.GetSection(VectorStoreOptions.SectionName));
-        var vectorStoreType = configuration.GetValue<string>("VectorStore:Type") ?? "InMemory";
+        // Register Embedding Provider
+        if (useLocalAI)
+        {
+            services.AddSingleton<IEmbeddingProvider, OllamaEmbeddingProvider>();
+        }
+        else
+        {
+            services.AddSingleton<IEmbeddingProvider, AzureOpenAIEmbeddingProvider>();
+        }
+
+        // Adapt providers to existing interfaces for backward compatibility
+        services.AddScoped<IOpenAiService>(sp =>
+        {
+            var llmProvider = sp.GetRequiredService<ILLMProvider>();
+            var promptProvider = sp.GetRequiredService<IPromptTemplateProvider>();
+            var logger = sp.GetRequiredService<ILogger<LLMProviderAdapter>>();
+            return new LLMProviderAdapter(llmProvider, promptProvider, logger);
+        });
+
+        services.AddSingleton<IEmbeddingService>(sp =>
+        {
+            var embeddingProvider = sp.GetRequiredService<IEmbeddingProvider>();
+            var rawService = new EmbeddingProviderAdapter(
+                embeddingProvider,
+                sp.GetRequiredService<ILogger<EmbeddingProviderAdapter>>());
+
+            // Wrap with resilience decorator
+            var pipelineProvider = sp.GetRequiredService<ResiliencePipelineProvider<string>>();
+            var options = sp.GetRequiredService<IOptions<EmbeddingProcessingOptions>>();
+            var metrics = sp.GetRequiredService<IMetricsService>();
+            var logger = sp.GetRequiredService<ILogger<ResilientEmbeddingService>>();
+            return new ResilientEmbeddingService(rawService, pipelineProvider, options, metrics, logger);
+        });
+
+        // Vector Store Configuration
+        var vectorDbType = configuration.GetValue<string>("AI:VectorDb:Type") ?? "Qdrant";
         
-        if (vectorStoreType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
+        if (vectorDbType.Equals("Qdrant", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddSingleton<IVectorStore, QdrantVectorStore>();
+        }
+        else if (vectorDbType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
             services.AddSingleton<IVectorStore, InMemoryVectorStore>();
         }
         else
         {
-            // Default to InMemory for now, CosmosVectorStore can be added later
-            services.AddSingleton<IVectorStore, InMemoryVectorStore>();
+            // Default to Qdrant for production
+            services.AddSingleton<IVectorStore, QdrantVectorStore>();
         }
 
         // Retrieval orchestrator

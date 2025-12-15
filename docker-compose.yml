@@ -1,6 +1,43 @@
 version: '3.8'
 
 services:
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aar-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aar-network
+    restart: unless-stopped
+  
+  # Ollama AI Service
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aar-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aar-network
+    restart: unless-stopped
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+
   # AAR API Service
   api:
     build:
@@ -16,17 +53,31 @@ services:
       - BlobStorage__Provider=FileSystem
       - BlobStorage__BasePath=/app/storage
       - QueueService__Provider=InMemory
-      - Azure__OpenAI__UseMock=true
+      - AI__Provider=Local
+      - AI__Local__OllamaUrl=http://ollama:11434
+      - AI__Local__LLMModel=qwen2.5-coder:7b
+      - AI__Local__EmbeddingModel=bge-large:latest
+      - AI__VectorDb__Type=Qdrant
+      - AI__VectorDb__Url=http://qdrant:6333
+      - AI__VectorDb__CollectionPrefix=aar
+      - AI__VectorDb__Dimension=1024
+      - Embedding__UseMock=false
+      - KeyVault__UseMockKeyVault=true
     volumes:
       - aar-data:/app/data
       - aar-storage:/app/storage
       - aar-logs:/app/logs
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 40s
     networks:
       - aar-network
     restart: unless-stopped
@@ -44,7 +95,16 @@ services:
       - BlobStorage__Provider=FileSystem
       - BlobStorage__BasePath=/app/storage
       - QueueService__Provider=InMemory
-      - Azure__OpenAI__UseMock=true
+      - AI__Provider=Local
+      - AI__Local__OllamaUrl=http://ollama:11434
+      - AI__Local__LLMModel=qwen2.5-coder:7b
+      - AI__Local__EmbeddingModel=bge-large:latest
+      - AI__VectorDb__Type=Qdrant
+      - AI__VectorDb__Url=http://qdrant:6333
+      - AI__VectorDb__CollectionPrefix=aar
+      - AI__VectorDb__Dimension=1024
+      - Embedding__UseMock=false
+      - KeyVault__UseMockKeyVault=true
     volumes:
       - aar-data:/app/data
       - aar-storage:/app/storage
@@ -52,11 +112,19 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
     networks:
       - aar-network
     restart: unless-stopped
 
 volumes:
+  qdrant-data:
+    driver: local
+  ollama-data:
+    driver: local
   aar-data:
     driver: local
   aar-storage:

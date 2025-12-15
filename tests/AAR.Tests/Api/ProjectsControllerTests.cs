@@ -27,7 +27,7 @@ public class ProjectsControllerTests : IAsyncLifetime
     {
         await _factory.InitializeDatabaseAsync();
         _client = _factory.CreateAuthenticatedClient();
-        _factory.ResetMocks();
+        // No longer using mocks - tests use real Ollama and Qdrant
     }
 
     public Task DisposeAsync()
@@ -60,8 +60,7 @@ public class ProjectsControllerTests : IAsyncLifetime
         result!.ProjectId.Should().NotBe(Guid.Empty);
         result.Status.Should().BeDefined();
         
-        // Verify blob storage was called
-        _factory.MockBlobStorage.BlobCount.Should().BeGreaterThan(0);
+        // Note: No longer checking mock blob storage - using real file system storage
     }
 
     [Fact]

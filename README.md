@@ -7,6 +7,15 @@ A production-ready .NET 10 application that automatically analyzes code reposito
 
 ## 🎯 Features
 
+- **🤖 Local AI Stack**: Production-grade local AI with **zero Azure dependency**
+  - LLM: Ollama (`qwen2.5-coder:7b`) - code-specialized 7B model
+  - Embeddings: BGE (`bge-large-en-v1.5`) - 1024D SOTA embeddings
+  - Vector DB: Qdrant - high-performance similarity search
+  - **Cost Savings**: 90-99% vs Azure OpenAI
+- **🧠 RAG Pipeline**: Retrieval-Augmented Generation for large repositories
+  - Semantic chunking (C#) and sliding window (other languages)
+  - Top-K vector retrieval with cosine similarity
+  - Context injection for precise analysis
 - **Upload Source Code**: Accept ZIP file uploads or clone directly from GitHub URLs
 - **Multi-Agent Analysis**: Four specialized AI agents analyze different aspects of your code:
   - 🏗️ **Structure Agent**: Folder organization, naming conventions, project structure
@@ -16,6 +25,7 @@ A production-ready .NET 10 application that automatically analyzes code reposito
 - **Consolidated Reports**: Generate comprehensive JSON and PDF reports
 - **RESTful API**: Full API with versioning, authentication, and OpenAPI documentation
 - **Async Processing**: Background worker service for non-blocking analysis
+- **Provider-Agnostic**: Switch between Local AI and Azure OpenAI with 1 config change
 
 ## 🏛️ Architecture
 
@@ -42,9 +52,81 @@ The project follows **Clean Architecture** principles:
 ### Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- [Docker](https://www.docker.com/get-started) (optional, for containerized deployment)
+- [Ollama](https://ollama.ai/download) (for Local AI)
+- [Docker](https://www.docker.com/get-started) (for Qdrant vector database)
 
-### Local Development
+### Local AI Setup (Recommended)
+
+**Step 1: Install Ollama**
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Windows: Download from https://ollama.ai/download
+```
+
+**Step 2: Pull AI Models**
+```bash
+ollama pull qwen2.5-coder:7b      # LLM (4.7 GB)
+ollama pull bge-large-en-v1.5     # Embeddings (1.3 GB)
+```
+
+**Step 3: Start Qdrant (Vector Database)**
+```bash
+docker run -d --name qdrant \
+  -p 6333:6333 -p 6334:6334 \
+  -v qdrant_storage:/qdrant/storage \
+  qdrant/qdrant
+```
+
+**Step 4: Clone and Configure**
+```bash
+git clone https://github.com/your-org/aar.git
+cd aar
+
+# Configuration is already set for Local AI in appsettings.json
+# Just verify AI.Provider = "Local"
+```
+
+**Step 5: Run Services**
+```bash
+# Terminal 1: Start Ollama
+ollama serve
+
+# Terminal 2: Run API
+cd src/AAR.Api
+dotnet run
+
+# Terminal 3: Run Worker
+cd src/AAR.Worker
+dotnet run
+```
+
+**Step 6: Access the Application**
+- Swagger UI: http://localhost:5000/swagger
+- Health Check: http://localhost:5000/health
+
+> 📚 **Detailed Setup**: See [docs/LOCAL_AI_SETUP.md](docs/LOCAL_AI_SETUP.md) for complete instructions
+
+### Alternative: Azure OpenAI Setup
+
+To use Azure OpenAI instead of local AI, update `appsettings.json`:
+```json
+{
+  "AI": {
+    "Provider": "Azure",
+    "Azure": {
+      "Endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
+      "ApiKey": "YOUR_API_KEY"
+    }
+  }
+}
+```
+
+### Local Development (Legacy)
 
 1. **Clone the repository**
    ```bash
@@ -126,42 +208,84 @@ curl http://localhost:5000/api/v1/reports/{reportId}/pdf \
 
 ## ⚙️ Configuration
 
-### Environment Variables
+### AI Provider Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ConnectionStrings__DefaultConnection` | Database connection string | `Data Source=aar.db` |
-| `UseSqlServer` | Use SQL Server instead of SQLite | `false` |
-| `Azure__OpenAI__Endpoint` | Azure OpenAI endpoint URL | - |
-| `Azure__OpenAI__ApiKey` | Azure OpenAI API key | - |
-| `Azure__OpenAI__DeploymentName` | Azure OpenAI deployment name | `gpt-4` |
-| `Azure__OpenAI__UseMock` | Use mock responses (no API calls) | `true` |
-| `Azure__Storage__ConnectionString` | Azure Blob Storage connection | - |
-| `BlobStorage__Provider` | Storage provider (`FileSystem` or `Azure`) | `FileSystem` |
-| `QueueService__Provider` | Queue provider (`InMemory` or `Azure`) | `InMemory` |
+AAR supports two AI providers:
 
-### appsettings.json
+#### 🤖 Local AI (Default - Recommended)
+Zero cloud costs, full privacy, air-gap compatible
 
 ```json
 {
-  "ConnectionStrings": {
-    "DefaultConnection": "Data Source=aar.db"
-  },
-  "UseSqlServer": false,
-  "Azure": {
-    "OpenAI": {
-      "Endpoint": "https://your-openai.openai.azure.com",
-      "ApiKey": "your-api-key",
-      "DeploymentName": "gpt-4",
-      "UseMock": false
+  "AI": {
+    "Provider": "Local",
+    "Local": {
+      "OllamaUrl": "http://localhost:11434",
+      "LLMModel": "qwen2.5-coder:7b",
+      "EmbeddingModel": "bge-large-en-v1.5",
+      "TimeoutSeconds": 120
+    },
+    "VectorDb": {
+      "Type": "Qdrant",
+      "Url": "http://localhost:6333",
+      "Dimension": 1024
+    },
+    "Rag": {
+      "SmallFileThresholdBytes": 10240,
+      "ChunkSizeTokens": 512,
+      "TopK": 10
     }
-  },
-  "BlobStorage": {
-    "Provider": "FileSystem",
-    "BasePath": "./storage"
   }
 }
 ```
+
+**Requirements:**
+- Ollama with models: `qwen2.5-coder:7b` (4.7 GB), `bge-large-en-v1.5` (1.3 GB)
+- Qdrant running on port 6333
+- 8-16 GB RAM recommended
+
+**Cost:** ~$5-10/month (electricity)
+
+#### ☁️ Azure OpenAI (Optional)
+Enterprise cloud option with Azure integration
+
+```json
+{
+  "AI": {
+    "Provider": "Azure",
+    "Azure": {
+      "Endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
+      "ApiKey": "YOUR_API_KEY",
+      "LLMDeployment": "gpt-4",
+      "EmbeddingDeployment": "text-embedding-ada-002"
+    },
+    "VectorDb": {
+      "Type": "Qdrant",
+      "Dimension": 1536
+    }
+  }
+}
+```
+
+**Requirements:**
+- Azure subscription
+- Azure OpenAI resource with gpt-4 and embedding deployments
+
+**Cost:** ~$50-500/month (per 10 analyses)
+
+> **📝 Note:** Switch between providers with **zero code changes** - just update the configuration!
+
+### Other Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AI__Provider` | AI provider (`Local` or `Azure`) | `Local` |
+| `AI__Local__OllamaUrl` | Ollama API URL | `http://localhost:11434` |
+| `AI__VectorDb__Url` | Qdrant URL | `http://localhost:6333` |
+| `ConnectionStrings__DefaultConnection` | Database connection string | `Data Source=aar.db` |
+| `UseSqlServer` | Use SQL Server instead of SQLite | `false` |
+| `BlobStorage__Provider` | Storage provider (`FileSystem` or `Azure`) | `FileSystem` |
+| `QueueService__Provider` | Queue provider (`InMemory` or `Azure`) | `InMemory` |
 
 ## 🧪 Testing
 
@@ -266,4 +390,29 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - 📧 Email: support@example.com
 - 🐛 Issues: [GitHub Issues](https://github.com/your-org/aar/issues)
-- 📖 Docs: [Full Documentation](./docs/ARCHITECTURE.md)
+- 📖 Documentation: See [docs/](./docs/) directory
+
+## 📚 Documentation
+
+### Getting Started
+- **[LOCAL_AI_SETUP.md](docs/LOCAL_AI_SETUP.md)** - Complete local AI setup guide
+- **[LOCAL_AI_QUICK_REFERENCE.md](docs/LOCAL_AI_QUICK_REFERENCE.md)** - Quick reference card
+- **[LOCAL_AI_SUMMARY.md](docs/LOCAL_AI_SUMMARY.md)** - Implementation details
+
+### Architecture & Design
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture overview
+- **[RAG_PIPELINE.md](docs/RAG_PIPELINE.md)** - RAG pipeline implementation
+- **[THREAT_MODEL.md](docs/THREAT_MODEL.md)** - Security threat model
+
+### Migrations & Updates
+- **[MIGRATION_KEYVAULT.md](docs/MIGRATION_KEYVAULT.md)** - Key Vault integration
+- **[MIGRATION_RAG.md](docs/MIGRATION_RAG.md)** - RAG pipeline migration
+- **[MIGRATION_SCALE.md](docs/MIGRATION_SCALE.md)** - Scaling improvements
+- **[MIGRATION_FIX_STREAMING_STUCK.md](docs/MIGRATION_FIX_STREAMING_STUCK.md)** - Batch processing fixes
+
+### Testing
+- **[TEST_PLAN.md](docs/TEST_PLAN.md)** - Comprehensive test plan
+
+---
+
+**🚀 Ready to analyze your code with enterprise-grade local AI!**

@@ -25,7 +25,7 @@ public class PreflightControllerTests : IAsyncLifetime
     {
         await _factory.InitializeDatabaseAsync();
         _client = _factory.CreateAuthenticatedClient();
-        _factory.ResetMocks();
+        // No longer using mocks - tests use real Ollama and Qdrant
     }
 
     public Task DisposeAsync()

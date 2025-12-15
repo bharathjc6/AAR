@@ -23,6 +23,8 @@ public static class ResiliencePipelineNames
     public const string OpenAiApi = "OpenAiApi";
     public const string BlobStorage = "BlobStorage";
     public const string Database = "Database";
+    public const string LLMProvider = "LLMProvider";
+    public const string EmbeddingProvider = "EmbeddingProvider";
 }
 
 /// <summary>
@@ -180,6 +182,102 @@ public static class ResilienceServiceCollectionExtensions
                             "Retry {Attempt}/3 for database: {Exception}",
                             args.AttemptNumber,
                             args.Outcome.Exception?.Message);
+                        return default;
+                    }
+                });
+        });
+
+        // LLM Provider pipeline (for Ollama/local LLM)
+        services.AddResiliencePipeline(ResiliencePipelineNames.LLMProvider, (builder, context) =>
+        {
+            var logger = context.ServiceProvider.GetRequiredService<ILogger<ResiliencePipelineBuilder>>();
+
+            builder
+                .AddTimeout(TimeSpan.FromMinutes(5)) // Long timeout for CPU-based LLM inference
+                .AddRetry(new RetryStrategyOptions
+                {
+                    MaxRetryAttempts = 3,
+                    Delay = TimeSpan.FromSeconds(2),
+                    BackoffType = DelayBackoffType.Exponential,
+                    UseJitter = true,
+                    ShouldHandle = new PredicateBuilder()
+                        .Handle<HttpRequestException>()
+                        .Handle<TimeoutRejectedException>()
+                        .Handle<TaskCanceledException>(ex => !ex.CancellationToken.IsCancellationRequested),
+                    OnRetry = args =>
+                    {
+                        logger.LogWarning(
+                            "Retry {Attempt}/3 for LLM provider: {Exception}",
+                            args.AttemptNumber,
+                            args.Outcome.Exception?.Message);
+                        return default;
+                    }
+                })
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+                {
+                    FailureRatio = 0.5,
+                    SamplingDuration = TimeSpan.FromMinutes(1),
+                    MinimumThroughput = 5,
+                    BreakDuration = TimeSpan.FromSeconds(30),
+                    ShouldHandle = new PredicateBuilder()
+                        .Handle<HttpRequestException>()
+                        .Handle<TimeoutRejectedException>(),
+                    OnOpened = args =>
+                    {
+                        logger.LogError("Circuit breaker OPENED for LLM provider");
+                        return default;
+                    },
+                    OnClosed = args =>
+                    {
+                        logger.LogInformation("Circuit breaker CLOSED for LLM provider");
+                        return default;
+                    }
+                });
+        });
+
+        // Embedding Provider pipeline (for Ollama embeddings)
+        services.AddResiliencePipeline(ResiliencePipelineNames.EmbeddingProvider, (builder, context) =>
+        {
+            var logger = context.ServiceProvider.GetRequiredService<ILogger<ResiliencePipelineBuilder>>();
+
+            builder
+                .AddTimeout(TimeSpan.FromSeconds(120)) // Embeddings timeout
+                .AddRetry(new RetryStrategyOptions
+                {
+                    MaxRetryAttempts = 3,
+                    Delay = TimeSpan.FromSeconds(1),
+                    BackoffType = DelayBackoffType.Exponential,
+                    UseJitter = true,
+                    ShouldHandle = new PredicateBuilder()
+                        .Handle<HttpRequestException>()
+                        .Handle<TimeoutRejectedException>()
+                        .Handle<TaskCanceledException>(ex => !ex.CancellationToken.IsCancellationRequested),
+                    OnRetry = args =>
+                    {
+                        logger.LogWarning(
+                            "Retry {Attempt}/3 for embedding provider: {Exception}",
+                            args.AttemptNumber,
+                            args.Outcome.Exception?.Message);
+                        return default;
+                    }
+                })
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+                {
+                    FailureRatio = 0.5,
+                    SamplingDuration = TimeSpan.FromSeconds(30),
+                    MinimumThroughput = 10,
+                    BreakDuration = TimeSpan.FromSeconds(15),
+                    ShouldHandle = new PredicateBuilder()
+                        .Handle<HttpRequestException>()
+                        .Handle<TimeoutRejectedException>(),
+                    OnOpened = args =>
+                    {
+                        logger.LogError("Circuit breaker OPENED for embedding provider");
+                        return default;
+                    },
+                    OnClosed = args =>
+                    {
+                        logger.LogInformation("Circuit breaker CLOSED for embedding provider");
                         return default;
                     }
                 });
