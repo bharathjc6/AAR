@@ -19,13 +19,16 @@ public class ReportAggregator : IReportAggregator
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<ReportAggregator> _logger;
+    private readonly AAR.Application.Interfaces.IOpenAiService _openAiService;
 
     public ReportAggregator(
         IUnitOfWork unitOfWork,
-        ILogger<ReportAggregator> logger)
+        ILogger<ReportAggregator> logger,
+        AAR.Application.Interfaces.IOpenAiService openAiService)
     {
         _unitOfWork = unitOfWork;
         _logger = logger;
+        _openAiService = openAiService;
     }
 
     /// <inheritdoc/>
@@ -103,11 +106,68 @@ public class ReportAggregator : IReportAggregator
         // Generate summary (include skipped findings info)
         var summary = GenerateSummary(agentResponses, findings, healthScore, skippedFindings);
 
-        // Deduplicate and limit recommendations
-        var uniqueRecommendations = allRecommendations
-            .Distinct()
-            .Take(10)
-            .ToList();
+        // Prefer AI-generated recommendations when available
+        var uniqueRecommendations = new List<string>();
+
+        try
+        {
+            var context = new AAR.Application.DTOs.AnalysisContext
+            {
+                ProjectId = projectId,
+                ProjectName = string.Empty,
+                WorkingDirectory = string.Empty,
+                Files = new List<AAR.Application.DTOs.AnalysisFileInfo>()
+            };
+
+            var summaryResult = await _openAiService.GenerateSummaryAsync(context, agentResponses.Values, cancellationToken);
+            if (summaryResult.IsSuccess && !string.IsNullOrWhiteSpace(summaryResult.Value))
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(summaryResult.Value);
+                    var root = doc.RootElement;
+
+                    // If LLM returned recommendations, use them
+                    if (root.TryGetProperty("recommendations", out var recs) && recs.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        uniqueRecommendations = recs.EnumerateArray()
+                            .Where(e => e.ValueKind == System.Text.Json.JsonValueKind.String)
+                            .Select(e => e.GetString()!)
+                            .Distinct()
+                            .Take(10)
+                            .ToList();
+                    }
+
+                    // If LLM returned a summary, prefer it
+                    if (root.TryGetProperty("summary", out var llmSummary) && llmSummary.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        // Override generated summary
+                        var llmSummaryText = llmSummary.GetString();
+                        if (!string.IsNullOrWhiteSpace(llmSummaryText))
+                        {
+                            summary = llmSummaryText;
+                        }
+                    }
+                }
+                catch (System.Text.Json.JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse LLM summary JSON; falling back to static recommendations");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LLM summary generation failed; falling back to static recommendations");
+        }
+
+        if (uniqueRecommendations == null || uniqueRecommendations.Count == 0)
+        {
+            // Deduplicate and limit recommendations from agents/heuristics
+            uniqueRecommendations = allRecommendations
+                .Distinct()
+                .Take(10)
+                .ToList();
+        }
 
         // Update report with statistics
         report.UpdateStatistics(

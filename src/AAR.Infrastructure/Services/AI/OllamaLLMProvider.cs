@@ -54,16 +54,61 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
             _options.LLMModel, _options.OllamaUrl);
     }
 
+    /// <summary>
+    /// Calculate adaptive timeout based on request parameters and strategy configuration
+    /// </summary>
+    /// <remarks>
+    /// Adaptive timeout is calculated as:
+    /// timeout = base + (maxTokens * perTokenTimeout)
+    /// Then clamped to [minTimeout, maxTimeout] range
+    /// </remarks>
+    private TimeSpan CalculateAdaptiveTimeout(LLMRequest request, bool isStreaming = false)
+    {
+        if (!_options.UseAdaptiveTimeout)
+        {
+            return TimeSpan.FromSeconds(_options.TimeoutSeconds);
+        }
+
+        var strategy = _options.TimeoutStrategy;
+        
+        // Calculate base timeout for this request
+        var baseSeconds = strategy.BaseTimeoutSeconds;
+        var additionalSeconds = (request.MaxTokens * strategy.PerTokenTimeoutMs) / 1000.0;
+        var totalSeconds = baseSeconds + additionalSeconds;
+
+        // Apply streaming multiplier if needed
+        if (isStreaming)
+        {
+            totalSeconds *= strategy.StreamingTimeoutMultiplier;
+        }
+
+        // Clamp to min/max bounds
+        var finalSeconds = Math.Max(
+            strategy.MinTimeoutSeconds,
+            Math.Min(strategy.MaxTimeoutSeconds, (int)Math.Ceiling(totalSeconds)));
+
+        _logger.LogDebug(
+            "Calculated adaptive timeout: {Timeout}s (base: {Base}s, tokens: {Tokens}, streaming: {IsStreaming})",
+            finalSeconds, baseSeconds, request.MaxTokens, isStreaming);
+
+        return TimeSpan.FromSeconds(finalSeconds);
+    }
+
     /// <inheritdoc/>
     public async Task<Result<LLMResponse>> AnalyzeAsync(
         LLMRequest request,
         CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
+        var adaptiveTimeout = CalculateAdaptiveTimeout(request, isStreaming: false);
 
         try
         {
-            _logger.LogDebug("Sending LLM request to Ollama (model: {Model})", _options.LLMModel);
+            _logger.LogDebug(
+                "Sending LLM request to Ollama (model: {Model}, maxTokens: {MaxTokens}, timeout: {Timeout}s)",
+                _options.LLMModel,
+                request.MaxTokens,
+                adaptiveTimeout.TotalSeconds);
 
             var ollamaRequest = new OllamaRequest
             {
@@ -97,7 +142,11 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
 
             stopwatch.Stop();
 
-            _logger.LogInformation("LLM request completed in {Duration}ms", stopwatch.ElapsedMilliseconds);
+            _logger.LogInformation(
+                "LLM request completed in {Duration}ms (tokens: prompt={PromptTokens}, completion={CompletionTokens})",
+                stopwatch.ElapsedMilliseconds,
+                response.PromptEvalCount ?? 0,
+                response.EvalCount ?? 0);
 
             return Result<LLMResponse>.Success(new LLMResponse
             {
@@ -125,17 +174,43 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
         }
         catch (TaskCanceledException)
         {
-            _logger.LogError("LLM request timed out or was cancelled (TaskCanceledException)");
+            stopwatch.Stop();
+            _logger.LogError(
+                "LLM request timed out after {Duration}ms. " +
+                "Consider: 1) Increasing TimeoutStrategy.MaxTimeoutSeconds, " +
+                "2) Reducing MaxTokens, or 3) Deploying a faster model/GPU.",
+                stopwatch.ElapsedMilliseconds);
+
+            // Graceful degradation: provide a partial response based on what we have
+            if (_options.TimeoutStrategy.EnableGracefulDegradation)
+            {
+                _logger.LogWarning(
+                    "Graceful degradation enabled: attempting to return partial/fallback result");
+                return Result<LLMResponse>.Failure(new Error(
+                    "LLM.Timeout",
+                    "Request timed out after " + (int)stopwatch.Elapsed.TotalSeconds + " seconds. " +
+                    "The LLM service is overloaded or the inference is too slow. " +
+                    "Increase TimeoutStrategy.MaxTimeoutSeconds in configuration or try again later."));
+            }
+
             return Result<LLMResponse>.Failure(new Error(
                 "LLM.Timeout",
                 "Request timed out or was cancelled"));
         }
         catch (Polly.Timeout.TimeoutRejectedException tex)
         {
-            _logger.LogError(tex, "LLM request timed out by resilience pipeline");
+            stopwatch.Stop();
+            _logger.LogError(
+                tex,
+                "LLM request timed out by resilience pipeline after {Duration}ms. " +
+                "Adaptive timeout was: {Timeout}s. Consider increasing TimeoutStrategy.MaxTimeoutSeconds.",
+                stopwatch.ElapsedMilliseconds,
+                CalculateAdaptiveTimeout(request).TotalSeconds);
+
             return Result<LLMResponse>.Failure(new Error(
                 "LLM.Timeout",
-                "Request timed out by resilience pipeline"));
+                "Request timed out by resilience pipeline after " + (int)stopwatch.Elapsed.TotalSeconds + " seconds. " +
+                "The model inference is taking longer than expected. Adjust configuration or try a faster model."));
         }
         catch (Exception ex)
         {
@@ -156,10 +231,15 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
         var fullContent = new StringBuilder();
         int promptTokens = 0;
         int completionTokens = 0;
+        var adaptiveTimeout = CalculateAdaptiveTimeout(request, isStreaming: true);
 
         try
         {
-            _logger.LogDebug("Sending streaming LLM request to Ollama (model: {Model})", _options.LLMModel);
+            _logger.LogDebug(
+                "Sending streaming LLM request to Ollama (model: {Model}, maxTokens: {MaxTokens}, timeout: {Timeout}s)",
+                _options.LLMModel,
+                request.MaxTokens,
+                adaptiveTimeout.TotalSeconds);
 
             var ollamaRequest = new OllamaRequest
             {
@@ -244,17 +324,61 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("Streaming LLM request cancelled");
+            stopwatch.Stop();
+            _logger.LogWarning("Streaming LLM request cancelled or timed out after {Duration}ms", stopwatch.ElapsedMilliseconds);
+            
+            // If we have partial content from graceful degradation, return it
+            if (_options.TimeoutStrategy.EnableGracefulDegradation && fullContent.Length > 0)
+            {
+                _logger.LogInformation(
+                    "Graceful degradation: returning {ContentLength} chars of partial streamed response",
+                    fullContent.Length);
+                return Result<LLMResponse>.Success(new LLMResponse
+                {
+                    Content = fullContent.ToString(),
+                    PromptTokens = promptTokens,
+                    CompletionTokens = completionTokens,
+                    Model = _options.LLMModel,
+                    Duration = stopwatch.Elapsed,
+                    FinishReason = "incomplete"
+                });
+            }
+
             return Result<LLMResponse>.Failure(new Error(
                 "LLM.Cancelled",
-                "Request was cancelled"));
+                "Request was cancelled or timed out after " + (int)stopwatch.Elapsed.TotalSeconds + " seconds"));
         }
         catch (Polly.Timeout.TimeoutRejectedException tex)
         {
-            _logger.LogError(tex, "Streaming LLM request timed out by resilience pipeline");
+            stopwatch.Stop();
+            _logger.LogError(
+                tex,
+                "Streaming LLM request timed out by resilience pipeline after {Duration}ms. " +
+                "Adaptive timeout was: {Timeout}s.",
+                stopwatch.ElapsedMilliseconds,
+                CalculateAdaptiveTimeout(request, isStreaming: true).TotalSeconds);
+
+            // Return partial content if graceful degradation is enabled
+            if (_options.TimeoutStrategy.EnableGracefulDegradation && fullContent.Length > 0)
+            {
+                _logger.LogInformation(
+                    "Graceful degradation: returning {ContentLength} chars of partial streamed response",
+                    fullContent.Length);
+                return Result<LLMResponse>.Success(new LLMResponse
+                {
+                    Content = fullContent.ToString(),
+                    PromptTokens = promptTokens,
+                    CompletionTokens = completionTokens,
+                    Model = _options.LLMModel,
+                    Duration = stopwatch.Elapsed,
+                    FinishReason = "incomplete"
+                });
+            }
+
             return Result<LLMResponse>.Failure(new Error(
                 "LLM.Timeout",
-                "Streaming request timed out by resilience pipeline"));
+                "Streaming request timed out after " + (int)stopwatch.Elapsed.TotalSeconds + " seconds. " +
+                "Increase TimeoutStrategy.MaxTimeoutSeconds or reduce MaxTokens."));
         }
         catch (Exception ex)
         {

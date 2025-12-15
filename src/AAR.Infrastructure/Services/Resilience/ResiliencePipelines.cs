@@ -12,6 +12,7 @@ using Polly;
 using Polly.CircuitBreaker;
 using Polly.Retry;
 using Polly.Timeout;
+using PollyTimeoutStrategyOptions = Polly.Timeout.TimeoutStrategyOptions;
 
 namespace AAR.Infrastructure.Services.Resilience;
 
@@ -46,7 +47,7 @@ public static class ResilienceServiceCollectionExtensions
 
             builder
                 // Timeout for individual embedding calls
-                .AddTimeout(new TimeoutStrategyOptions
+                .AddTimeout(new PollyTimeoutStrategyOptions
                 {
                     Timeout = TimeSpan.FromSeconds(60),
                     OnTimeout = args =>
@@ -192,15 +193,18 @@ public static class ResilienceServiceCollectionExtensions
         services.AddResiliencePipeline(ResiliencePipelineNames.LLMProvider, (builder, context) =>
         {
             var logger = context.ServiceProvider.GetRequiredService<ILogger<ResiliencePipelineBuilder>>();
-            
-            // For local LLM (Ollama), use a longer timeout since CPU inference is slow
-            // This can be configured per deployment; default is 10 minutes for CPU inference
-            var llmTimeoutMinutes = context.ServiceProvider
-                .GetRequiredService<IConfiguration>()
-                .GetValue<int>("AI:LLM:TimeoutMinutes", 10);
+            var aiOptions = context.ServiceProvider.GetRequiredService<IOptions<AIProviderOptions>>().Value;
+            var localOptions = aiOptions.Local;
+            var timeoutStrategy = localOptions.TimeoutStrategy;
 
+            // Use adaptive timeout strategy: base + per-token calculation
+            // This allows longer timeouts for larger requests while keeping small requests fast
             builder
-                .AddTimeout(TimeSpan.FromMinutes(llmTimeoutMinutes))
+                .AddTimeout(new PollyTimeoutStrategyOptions
+                {
+                    // Use the max timeout from adaptive strategy config (Polly uses this as the base)
+                    Timeout = TimeSpan.FromSeconds(timeoutStrategy.MaxTimeoutSeconds)
+                })
                 .AddRetry(new RetryStrategyOptions
                 {
                     MaxRetryAttempts = 2, // Reduced from 3 to avoid cascading timeouts
@@ -215,7 +219,8 @@ public static class ResilienceServiceCollectionExtensions
                     OnRetry = args =>
                     {
                         logger.LogWarning(
-                            "Retry {Attempt}/2 for LLM provider: {Exception}",
+                            "Retry {Attempt}/2 for LLM provider: {Exception}. " +
+                            "This may indicate slow inference or high load on the LLM service.",
                             args.AttemptNumber,
                             args.Outcome.Exception?.Message);
                         return default;

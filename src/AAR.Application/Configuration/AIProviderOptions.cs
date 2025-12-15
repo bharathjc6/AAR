@@ -80,6 +80,67 @@ public class LocalAIOptions
     /// Max tokens for LLM responses
     /// </summary>
     public int MaxTokens { get; set; } = 4096;
+
+    /// <summary>
+    /// Timeout strategy configuration for adaptive timeouts
+    /// </summary>
+    public LLMTimeoutStrategyOptions TimeoutStrategy { get; set; } = new();
+
+    /// <summary>
+    /// Enable adaptive timeout calculation based on request parameters
+    /// </summary>
+    public bool UseAdaptiveTimeout { get; set; } = true;
+}
+
+/// <summary>
+/// Adaptive timeout strategy configuration for LLM requests
+/// </summary>
+public class LLMTimeoutStrategyOptions
+{
+    /// <summary>
+    /// Base timeout in seconds for all requests
+    /// </summary>
+    public int BaseTimeoutSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Per-token timeout in milliseconds (added to base for larger requests)
+    /// </summary>
+    public double PerTokenTimeoutMs { get; set; } = 10.0;
+
+    /// <summary>
+    /// Maximum timeout ceiling in seconds (adaptive never exceeds this)
+    /// </summary>
+    public int MaxTimeoutSeconds { get; set; } = 600;
+
+    /// <summary>
+    /// Minimum timeout floor in seconds
+    /// </summary>
+    public int MinTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Enable connection pooling and keep-alive optimization
+    /// </summary>
+    public bool EnableConnectionPooling { get; set; } = true;
+
+    /// <summary>
+    /// HTTP keep-alive timeout in seconds
+    /// </summary>
+    public int KeepAliveTimeoutSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// Enable graceful degradation on timeout (fallback to cached/heuristic results)
+    /// </summary>
+    public bool EnableGracefulDegradation { get; set; } = true;
+
+    /// <summary>
+    /// Timeout multiplier for streaming vs non-streaming requests
+    /// </summary>
+    public double StreamingTimeoutMultiplier { get; set; } = 1.5;
+
+    /// <summary>
+    /// Timeout multiplier for retry attempts (increases per retry)
+    /// </summary>
+    public double RetryTimeoutMultiplier { get; set; } = 1.2;
 }
 
 /// <summary>
