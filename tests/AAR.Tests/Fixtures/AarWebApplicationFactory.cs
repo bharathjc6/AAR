@@ -87,6 +87,7 @@ public class AarWebApplicationFactory : WebApplicationFactory<ApiProgram>
                 ["AI:VectorDb:Type"] = "Qdrant",
                 ["AI:VectorDb:Url"] = "http://localhost:6333",
                 ["AI:VectorDb:CollectionPrefix"] = "aar_test",
+                ["AI:VectorDb:PerProjectCollections"] = "true",
                 ["AI:VectorDb:Dimension"] = "1024",
                 ["Embedding:UseMock"] = "false",
                 // Relax upload constraints for testing

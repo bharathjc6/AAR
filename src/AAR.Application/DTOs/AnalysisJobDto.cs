@@ -54,7 +54,7 @@ public record AnalysisContext
     /// <summary>
     /// List of files to analyze
     /// </summary>
-    public IReadOnlyList<AnalysisFileInfo> Files { get; init; } = [];
+    public IReadOnlyList<AnalysisFileInfo> Files { get; init; } = Array.Empty<AnalysisFileInfo>();
 }
 
 /// <summary>

@@ -388,7 +388,9 @@ try
         if (!app.Environment.IsEnvironment("Testing") && db.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
         {
             Log.Information("Applying database migrations...");
+            // MigrateAsync handles both scenarios: creates DB if it doesn't exist, applies pending migrations if it does
             await db.Database.MigrateAsync();
+            Log.Information("Database migrations completed successfully.");
         }
         else if (app.Environment.IsEnvironment("Testing"))
         {

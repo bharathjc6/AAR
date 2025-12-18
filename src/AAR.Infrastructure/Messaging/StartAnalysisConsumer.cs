@@ -415,17 +415,19 @@ public class StartAnalysisConsumer : IConsumer<StartAnalysisCommand>
         }
     }
 
-    private static readonly HashSet<string> SourceExtensions = [
-        ".cs", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".go", ".rs", 
+    private static readonly HashSet<string> SourceExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".cs", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".go", ".rs",
         ".cpp", ".c", ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala",
         ".json", ".xml", ".yaml", ".yml", ".md", ".txt"
-    ];
+    };
 
-    private static readonly HashSet<string> ExcludedDirectories = [
-        "node_modules", "bin", "obj", ".git", ".vs", ".idea", 
+    private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "node_modules", "bin", "obj", ".git", ".vs", ".idea",
         "packages", "dist", "build", "__pycache__", ".venv", "venv",
         "coverage", ".nyc_output", "TestResults", ".nuget"
-    ];
+    };
 
     private Dictionary<string, string> LoadSourceFiles(string workingDirectory)
     {

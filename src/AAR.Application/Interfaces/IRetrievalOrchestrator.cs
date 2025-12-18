@@ -56,6 +56,11 @@ public interface IRetrievalOrchestrator
         Guid projectId,
         string workingDirectory,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Repairs vectors in the vector store for a project by re-indexing DB-stored embeddings.
+    /// </summary>
+    Task RepairProjectVectorsAsync(Guid projectId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -66,6 +66,16 @@ public class Chunk : BaseEntity
     public string? Content { get; private set; }
 
     /// <summary>
+    /// Index of this chunk within its semantic unit (0-based)
+    /// </summary>
+    public int ChunkIndex { get; private set; }
+
+    /// <summary>
+    /// Total number of chunks in the semantic unit
+    /// </summary>
+    public int TotalChunks { get; private set; }
+
+    /// <summary>
     /// Embedding vector (serialized as JSON array of floats)
     /// </summary>
     public string? EmbeddingJson { get; private set; }
@@ -102,7 +112,9 @@ public class Chunk : BaseEntity
         string chunkHash,
         string? semanticType = null,
         string? semanticName = null,
-        string? content = null)
+        string? content = null,
+        int chunkIndex = 0,
+        int totalChunks = 1)
     {
         return new Chunk
         {
@@ -118,6 +130,8 @@ public class Chunk : BaseEntity
             SemanticType = semanticType,
             SemanticName = semanticName,
             Content = content,
+            ChunkIndex = chunkIndex,
+            TotalChunks = totalChunks,
             CreatedAt = DateTime.UtcNow
         };
     }

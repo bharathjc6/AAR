@@ -96,6 +96,26 @@ public record ChunkInfo
     /// Semantic name (class name, method name, etc.)
     /// </summary>
     public string? SemanticName { get; init; }
+    
+    /// <summary>
+    /// Namespace or module owning this chunk (if applicable)
+    /// </summary>
+    public string? Namespace { get; init; }
+
+    /// <summary>
+    /// Responsibility/owner inferred from namespace or folder (best-effort)
+    /// </summary>
+    public string? Responsibility { get; init; }
+
+    /// <summary>
+    /// Index of this chunk within its semantic unit (0-based)
+    /// </summary>
+    public int ChunkIndex { get; init; }
+
+    /// <summary>
+    /// Total number of chunks that belong to the same semantic unit
+    /// </summary>
+    public int TotalChunks { get; init; }
 }
 
 /// <summary>

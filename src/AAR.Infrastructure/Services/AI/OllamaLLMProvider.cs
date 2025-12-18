@@ -134,9 +134,16 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
                         ollamaRequest,
                         ct);
 
-                    httpResponse.EnsureSuccessStatusCode();
-                    return await httpResponse.Content.ReadFromJsonAsync<OllamaResponse>(ct)
-                        ?? throw new InvalidOperationException("Empty response from Ollama");
+                    if (!httpResponse.IsSuccessStatusCode)
+                    {
+                        var body = string.Empty;
+                        try { body = await httpResponse.Content.ReadAsStringAsync(ct); } catch { }
+                        var code = (int)httpResponse.StatusCode;
+                        throw new HttpRequestException($"Ollama returned {code} {httpResponse.ReasonPhrase}: {body}");
+                    }
+
+                    var parsed = await httpResponse.Content.ReadFromJsonAsync<OllamaResponse>(ct);
+                    return parsed ?? throw new InvalidOperationException("Empty response from Ollama");
                 },
                 cancellationToken);
 

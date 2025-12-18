@@ -200,6 +200,18 @@ public class VectorDbOptions
     public string CollectionPrefix { get; set; } = "aar";
 
     /// <summary>
+    /// When true, create one collection per project (collection name will include project id).
+    /// When false, a single shared collection is used and project filtering is applied via payload.
+    /// </summary>
+    public bool PerProjectCollections { get; set; } = false;
+
+    /// <summary>
+    /// If true, throw when an indexing operation reports zero points persisted for a non-empty batch.
+    /// This enables fail-fast behavior when Qdrant upserts silently fail.
+    /// </summary>
+    public bool FailOnIndexingFailure { get; set; } = true;
+
+    /// <summary>
     /// Vector dimension (1024 for BGE-large, 1536 for Ada-002)
     /// </summary>
     public int Dimension { get; set; } = 1024;

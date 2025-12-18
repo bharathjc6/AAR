@@ -109,6 +109,26 @@ public record VectorMetadata
     /// Text content (optional)
     /// </summary>
     public string? Content { get; init; }
+    
+    /// <summary>
+    /// Namespace or module owning this chunk (if available)
+    /// </summary>
+    public string? Namespace { get; init; }
+
+    /// <summary>
+    /// Responsibility/owner inferred from namespace or folder (best-effort)
+    /// </summary>
+    public string? Responsibility { get; init; }
+
+    /// <summary>
+    /// Index of this chunk within its semantic unit (0-based)
+    /// </summary>
+    public int ChunkIndex { get; init; }
+
+    /// <summary>
+    /// Total number of chunks in the semantic unit
+    /// </summary>
+    public int TotalChunks { get; init; }
 }
 
 /// <summary>

@@ -47,7 +47,7 @@ public record ValidationResult
     /// <summary>
     /// List of validation errors
     /// </summary>
-    public IReadOnlyList<string> Errors { get; init; } = [];
+    public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
 
     /// <summary>
     /// Creates a successful validation result

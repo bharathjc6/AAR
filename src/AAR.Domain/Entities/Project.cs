@@ -75,7 +75,7 @@ public class Project : BaseEntity
     /// <summary>
     /// Navigation property to file records
     /// </summary>
-    public ICollection<FileRecord> Files { get; private set; } = [];
+    public ICollection<FileRecord> Files { get; private set; } = new List<FileRecord>();
     
     /// <summary>
     /// Navigation property to the report

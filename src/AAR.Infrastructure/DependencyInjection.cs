@@ -6,6 +6,7 @@
 using AAR.Application.Configuration;
 using AAR.Application.Interfaces;
 using AAR.Application.Messaging;
+using AAR.Application.Services;
 using AAR.Domain.Interfaces;
 using AAR.Infrastructure.Messaging;
 using AAR.Infrastructure.Persistence;
@@ -154,6 +155,8 @@ public static class DependencyInjection
         // Cluster-based analysis services (Phase 1-2 of pipeline)
         services.AddScoped<IStaticAnalyzer, StaticAnalyzer>();
         services.AddScoped<IClusterBuilder, ClusterBuilder>();
+        services.AddScoped<ClusterSynthesizer>();
+        services.AddScoped<CrossFileSynthesizer>();
 
         // Tokenization services
         services.Configure<TokenizerOptions>(configuration.GetSection(TokenizerOptions.SectionName));

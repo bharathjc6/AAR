@@ -242,6 +242,9 @@ Only respond with the JSON array.";
             if (jsonStart >= 0 && jsonEnd > jsonStart)
             {
                 var json = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
+                // Sanitize JSON by removing comments
+                json = System.Text.RegularExpressions.Regex.Replace(json, @"//.*?[\r\n]", "\r\n");
+                json = System.Text.RegularExpressions.Regex.Replace(json, @"/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline);
                 var parsed = JsonSerializer.Deserialize<List<AiFinding>>(json, AiFindingModels.JsonOptions);
                 
                 if (parsed != null)

@@ -110,9 +110,9 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
                 _logger.LogError(ex, "{AgentType} agent failed", agent.AgentType);
                 agentResponses[agent.AgentType] = new AgentAnalysisResponse
                 {
-                    Findings = [],
+                    Findings = new List<AgentFinding>(),
                     Summary = $"{agent.AgentType} failed: {ex.Message}",
-                    Recommendations = []
+                    Recommendations = new List<string>()
                 };
             }
         }
@@ -134,13 +134,6 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
         var stopwatch = Stopwatch.StartNew();
         var allFindings = new List<ReviewFinding>();
         var agentResponses = new Dictionary<AgentType, AgentAnalysisResponse>();
-
-        var context = new RagAnalysisContext
-        {
-            ProjectId = plan.ProjectId,
-            WorkingDirectory = plan.WorkingDirectory,
-            Plan = plan
-        };
 
         // Log the plan
         LogAnalysisPlan(plan);
@@ -228,9 +221,9 @@ public class RagAwareAgentOrchestrator : IRagAwareAgentOrchestrator
 
                 agentResponses[agent.AgentType] = new AgentAnalysisResponse
                 {
-                    Findings = [],
+                    Findings = new List<AgentFinding>(),
                     Summary = $"{agent.AgentType} failed: {ex.Message}",
-                    Recommendations = []
+                    Recommendations = new List<string>()
                 };
 
                 // Add error finding

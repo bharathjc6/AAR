@@ -23,7 +23,7 @@ public class Report : BaseEntity
     /// <summary>
     /// High-level recommendations
     /// </summary>
-    public IList<string> Recommendations { get; private set; } = [];
+    public IList<string> Recommendations { get; private set; } = new List<string>();
     
     /// <summary>
     /// Overall health score (0-100)
@@ -83,7 +83,7 @@ public class Report : BaseEntity
     /// <summary>
     /// Findings in this report
     /// </summary>
-    public ICollection<ReviewFinding> Findings { get; private set; } = [];
+    public ICollection<ReviewFinding> Findings { get; private set; } = new List<ReviewFinding>();
 
     // Private constructor for EF Core
     private Report() { }

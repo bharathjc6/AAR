@@ -225,17 +225,17 @@ public record AnalysisEstimation
     /// <summary>
     /// Warnings about the analysis.
     /// </summary>
-    public List<string> Warnings { get; init; } = [];
+    public List<string> Warnings { get; init; } = new List<string>();
 
     /// <summary>
     /// Breakdown by file type.
     /// </summary>
-    public Dictionary<string, int> FileTypeBreakdown { get; init; } = [];
+    public Dictionary<string, int> FileTypeBreakdown { get; init; } = new Dictionary<string, int>();
 
     /// <summary>
     /// List of skipped files with reasons.
     /// </summary>
-    public List<SkippedFileInfo> SkippedFiles { get; init; } = [];
+    public List<SkippedFileInfo> SkippedFiles { get; init; } = new List<SkippedFileInfo>();
 }
 
 /// <summary>

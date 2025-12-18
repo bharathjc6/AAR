@@ -20,15 +20,21 @@ public class ReportAggregator : IReportAggregator
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<ReportAggregator> _logger;
     private readonly AAR.Application.Interfaces.IOpenAiService _openAiService;
+    private readonly ClusterSynthesizer _clusterSynthesizer;
+    private readonly CrossFileSynthesizer _crossFileSynthesizer;
 
     public ReportAggregator(
         IUnitOfWork unitOfWork,
         ILogger<ReportAggregator> logger,
-        AAR.Application.Interfaces.IOpenAiService openAiService)
+        AAR.Application.Interfaces.IOpenAiService openAiService,
+        ClusterSynthesizer clusterSynthesizer,
+        CrossFileSynthesizer crossFileSynthesizer)
     {
         _unitOfWork = unitOfWork;
         _logger = logger;
         _openAiService = openAiService;
+        _clusterSynthesizer = clusterSynthesizer;
+        _crossFileSynthesizer = crossFileSynthesizer;
     }
 
     /// <inheritdoc/>
@@ -44,8 +50,8 @@ public class ReportAggregator : IReportAggregator
         var report = Report.Create(projectId);
         await _unitOfWork.Reports.AddAsync(report, cancellationToken);
 
-        // Collect all findings
-        var findings = new List<ReviewFinding>();
+        // Collect raw agent findings and recommendations
+        var rawFindings = new List<AgentFinding>();
         var allRecommendations = new List<string>();
         var skippedFindings = new List<string>();
 
@@ -58,14 +64,8 @@ public class ReportAggregator : IReportAggregator
 
             foreach (var finding in response.Findings)
             {
-                // Basic validation: require at least a description and either:
-                // - A file path (file-level finding), OR
-                // - A meaningful explanation (project-level finding)
+                // Basic validation: require at least a description
                 var hasDescription = !string.IsNullOrWhiteSpace(finding.Description);
-                var hasFile = !string.IsNullOrWhiteSpace(finding.FilePath);
-                var hasExplanation = !string.IsNullOrWhiteSpace(finding.Explanation);
-
-                // Reject findings that are completely empty or have no useful context
                 if (!hasDescription)
                 {
                     _logger.LogWarning("Skipping finding from {AgentType} due to missing description",
@@ -74,20 +74,21 @@ public class ReportAggregator : IReportAggregator
                     continue;
                 }
 
-                // For project-level findings (no file), require explanation
-                if (!hasFile && !hasExplanation)
-                {
-                    _logger.LogWarning(
-                        "Skipping project-level finding from {AgentType} - no file and no explanation: {Description}",
-                        agentType, finding.Description);
-                    skippedFindings.Add($"{agentType}: {finding.Description}");
-                    continue;
-                }
-
-                var reviewFinding = MapToReviewFinding(projectId, report.Id, agentType, finding);
-                findings.Add(reviewFinding);
+                rawFindings.Add(finding);
             }
         }
+
+        // Synthesize clusters (one LLM call per cluster) to consolidate related findings
+        var synthesized = await _clusterSynthesizer.SynthesizeAsync(rawFindings, cancellationToken);
+
+        // Deduplicate by fingerprint and merge confidences/severity
+        var deduped = DeduplicateAndMerge(synthesized, skippedFindings);
+
+        // Cross-file narrative synthesis
+        var narrative = await _crossFileSynthesizer.SynthesizeNarrativeAsync(deduped, cancellationToken);
+
+        // Map to ReviewFinding
+        var findings = deduped.Select(f => MapToReviewFinding(projectId, report.Id, AgentType.CodeQuality, f)).ToList();
 
         // Add findings to database
         if (findings.Count > 0)
@@ -103,8 +104,12 @@ public class ReportAggregator : IReportAggregator
         // Calculate health score (simple algorithm)
         var healthScore = CalculateHealthScore(highCount, mediumCount, lowCount);
 
-        // Generate summary (include skipped findings info)
+        // Generate summary (include skipped findings info and cross-file narrative)
         var summary = GenerateSummary(agentResponses, findings, healthScore, skippedFindings);
+        if (!string.IsNullOrWhiteSpace(narrative))
+        {
+            summary = narrative + "\n\n" + summary;
+        }
 
         // Prefer AI-generated recommendations when available
         var uniqueRecommendations = new List<string>();
@@ -250,6 +255,69 @@ public class ReportAggregator : IReportAggregator
             finding.Symbol,
             finding.Confidence);
     }
+
+    private List<AgentFinding> DeduplicateAndMerge(IEnumerable<AgentFinding> findings, List<string> skippedFindings)
+    {
+        var groups = findings.GroupBy(f => BuildFingerprintKey(f));
+        var merged = new List<AgentFinding>();
+
+        foreach (var g in groups)
+        {
+            var list = g.ToList();
+
+            // Merge logic: severity = highest, confidence = max, descriptions concatenated
+            var severity = list.Select(f => f.Severity).FirstOrDefault(s => string.Equals(s, "High", StringComparison.OrdinalIgnoreCase))
+                ?? list.Select(f => f.Severity).FirstOrDefault(s => string.Equals(s, "Medium", StringComparison.OrdinalIgnoreCase))
+                ?? list.Select(f => f.Severity).FirstOrDefault() ?? "Medium";
+
+            var confidence = list.Max(f => f.Confidence);
+            // Severity rebalance: if there are multiple reports and average confidence high, escalate
+            var avgConfidence = list.Average(f => f.Confidence);
+            var highCount = list.Count(f => string.Equals(f.Severity, "High", StringComparison.OrdinalIgnoreCase));
+            if (highCount >= 2 || avgConfidence > 0.85)
+            {
+                severity = "High";
+            }
+            var filePath = list.Select(f => f.FilePath).Distinct().Count() == 1 ? list.First().FilePath : null;
+            var symbol = list.Select(f => f.Symbol).Distinct().Count() == 1 ? list.First().Symbol : null;
+            var category = list.Select(f => f.Category).FirstOrDefault() ?? string.Empty;
+            var description = string.Join("\n---\n", list.Select(f => f.Description).Where(s => !string.IsNullOrWhiteSpace(s)));
+            var explanation = string.Join("\n\n", list.Select(f => f.Explanation).Where(s => !string.IsNullOrWhiteSpace(s)));
+            var suggestedFix = list.Select(f => f.SuggestedFix).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+
+            var candidate = new AgentFinding
+            {
+                Id = Guid.NewGuid().ToString(),
+                FilePath = filePath,
+                LineRange = null,
+                Category = category,
+                Severity = severity,
+                Description = description,
+                Explanation = explanation,
+                SuggestedFix = suggestedFix,
+                FixedCodeSnippet = null,
+                OriginalCodeSnippet = null,
+                Symbol = symbol,
+                Confidence = confidence
+            };
+
+            // Evidence gate: require either file-level evidence or an explanation with reasonable confidence
+            var hasFile = !string.IsNullOrWhiteSpace(candidate.FilePath);
+            var hasExplanation = !string.IsNullOrWhiteSpace(candidate.Explanation);
+            if (!hasFile && (!hasExplanation || candidate.Confidence < 0.3))
+            {
+                skippedFindings.Add($"[dedupe-skip]: {candidate.Description?.Split('\n').FirstOrDefault()}");
+                continue;
+            }
+
+            merged.Add(candidate);
+        }
+
+        return merged;
+    }
+
+    private static string BuildFingerprintKey(AgentFinding f)
+        => string.Join("|", new[] { f.Symbol ?? string.Empty, f.FilePath ?? string.Empty, f.Category ?? string.Empty });
 
     private static string GenerateSummary(
         IDictionary<AgentType, AgentAnalysisResponse> responses,

@@ -5,6 +5,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using System.IO;
 using AAR.Application.DTOs;
 using AAR.Application.Interfaces;
 using AAR.Domain.Entities;
@@ -62,6 +63,63 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
         _logger = logger;
     }
 
+    /// <summary>
+    /// Repair vectors for a project by re-indexing chunks stored in the DB (uses stored embeddings).
+    /// </summary>
+    public async Task RepairProjectVectorsAsync(Guid projectId, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Repairing vectors for project {ProjectId}", projectId);
+
+        var chunks = await _chunkRepository.GetWithEmbeddingsAsync(projectId, cancellationToken);
+        if (chunks == null || chunks.Count == 0)
+        {
+            _logger.LogInformation("No chunks with embeddings found for project {ProjectId}", projectId);
+            return;
+        }
+
+        var vectorBatch = new List<(string, float[], VectorMetadata)>();
+        foreach (var c in chunks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var emb = c.GetEmbedding();
+            if (emb == null)
+            {
+                _logger.LogWarning("Skipping chunk {ChunkHash} - no embedding", c.ChunkHash);
+                continue;
+            }
+
+            var semanticType = string.IsNullOrWhiteSpace(c.SemanticType) ? "file" : c.SemanticType;
+            var semanticName = string.IsNullOrWhiteSpace(c.SemanticName) ? Path.GetFileName(c.FilePath) : c.SemanticName;
+
+            var metadata = new VectorMetadata
+            {
+                ProjectId = c.ProjectId,
+                FilePath = c.FilePath,
+                StartLine = c.StartLine,
+                EndLine = c.EndLine,
+                Language = c.Language,
+                SemanticType = semanticType,
+                SemanticName = semanticName,
+                TokenCount = c.TokenCount,
+                Content = c.Content,
+                ChunkIndex = c.ChunkIndex,
+                TotalChunks = c.TotalChunks
+            };
+
+            vectorBatch.Add((c.ChunkHash, emb, metadata));
+        }
+
+        if (vectorBatch.Count == 0)
+        {
+            _logger.LogInformation("No vectors to repair for project {ProjectId}", projectId);
+            return;
+        }
+
+        _logger.LogInformation("Re-indexing {Count} vectors for project {ProjectId}", vectorBatch.Count, projectId);
+        await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
+        _logger.LogInformation("Repair completed for project {ProjectId}", projectId);
+    }
+
     /// <inheritdoc/>
     public async Task<RetrievalResult> RetrieveContextAsync(
         Guid projectId,
@@ -91,7 +149,7 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
             {
                 Context = string.Empty,
                 TokenCount = 0,
-                Sources = [],
+                Sources = Array.Empty<SourceReference>(),
                 WasSummarized = false,
                 RawChunkCount = 0,
                 RetrievalTimeMs = stopwatch.ElapsedMilliseconds
@@ -245,7 +303,9 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                             chunkHash: chunk.ChunkHash,
                             semanticType: chunk.SemanticType,
                             semanticName: chunk.SemanticName,
-                            content: _chunkerOptions.StoreChunkText ? chunk.Content : null);
+                            content: _chunkerOptions.StoreChunkText ? chunk.Content : null,
+                            chunkIndex: chunk.ChunkIndex,
+                            totalChunks: chunk.TotalChunks);
 
                         dbChunk.SetEmbedding(embedding, _embeddingService.ModelName);
                         dbChunks.Add(dbChunk);
@@ -260,7 +320,11 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                             SemanticType = chunk.SemanticType,
                             SemanticName = chunk.SemanticName,
                             TokenCount = chunk.TokenCount,
-                            Content = chunk.Content
+                            Content = chunk.Content,
+                            Namespace = chunk.Namespace,
+                            Responsibility = chunk.Responsibility
+                            ,ChunkIndex = chunk.ChunkIndex
+                            ,TotalChunks = chunk.TotalChunks
                         };
 
                         vectorBatch.Add((chunk.ChunkHash, embedding, metadata));
@@ -274,8 +338,40 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                     // CRITICAL: Clear change tracker to prevent memory buildup
                     _unitOfWork.ClearChangeTracker();
 
-                    // Index batch in vector store
+                    // Index batch in vector store with verification
+                    var beforeCount = await _vectorStore.CountAsync(projectId, cancellationToken);
+                    // Index and verify vector upsert
+                    var beforeCountInc = await _vectorStore.CountAsync(projectId, cancellationToken);
                     await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
+                    var afterCountInc = await _vectorStore.CountAsync(projectId, cancellationToken);
+
+                    if (afterCountInc - beforeCountInc < dbChunks.Count)
+                    {
+                        _logger.LogWarning("Incremental indexing: indexed delta {Delta} < expected {Expected}. Retrying once.",
+                            afterCountInc - beforeCountInc, dbChunks.Count);
+                        await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
+                        var afterRetryInc = await _vectorStore.CountAsync(projectId, cancellationToken);
+                        if (afterRetryInc - beforeCountInc < dbChunks.Count)
+                        {
+                            _logger.LogError("Incremental indexing retry did not increase vector count as expected (before: {Before}, afterRetry: {AfterRetry}).",
+                                beforeCountInc, afterRetryInc);
+                        }
+                    }
+                    var afterCount = await _vectorStore.CountAsync(projectId, cancellationToken);
+
+                    if (afterCount - beforeCount < dbChunks.Count)
+                    {
+                        _logger.LogWarning("Indexed vectors count increased by {Delta} but expected {Expected}. Retrying once.",
+                            afterCount - beforeCount, dbChunks.Count);
+                        // Retry once
+                        await _vectorStore.IndexVectorsAsync(vectorBatch, cancellationToken);
+                        var afterRetry = await _vectorStore.CountAsync(projectId, cancellationToken);
+                        if (afterRetry - beforeCount < dbChunks.Count)
+                        {
+                            _logger.LogError("Vector indexing retry did not increase count as expected (before: {Before}, afterRetry: {AfterRetry}).",
+                                beforeCount, afterRetry);
+                        }
+                    }
 
                     totalChunksCreated += dbChunks.Count;
                     totalEmbeddingsGenerated += embeddings.Count;
@@ -341,36 +437,111 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
         CancellationToken cancellationToken)
     {
         var allEmbeddings = new List<float[]>(contents.Count);
-
         for (var i = 0; i < contents.Count; i += EmbeddingBatchSize)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            
+
             var batch = contents.Skip(i).Take(EmbeddingBatchSize).ToList();
-            var embeddings = await _embeddingService.CreateEmbeddingsAsync(batch, cancellationToken);
-            allEmbeddings.AddRange(embeddings);
-            
-            _logger.LogDebug("Generated embeddings {Start}-{End}/{Total}",
-                i + 1, Math.Min(i + EmbeddingBatchSize, contents.Count), contents.Count);
+
+            try
+            {
+                var embeddings = await _embeddingService.CreateEmbeddingsAsync(batch, cancellationToken);
+
+                // If the embedding service returned fewer embeddings than requested, fall back to per-item generation
+                if (embeddings.Count != batch.Count)
+                {
+                    _logger.LogWarning("Embedding API returned {Returned}/{Requested} embeddings. Falling back to per-item generation for the batch.", embeddings.Count, batch.Count);
+                    for (var j = 0; j < batch.Count; j++)
+                    {
+                        if (j < embeddings.Count && embeddings[j] != null)
+                        {
+                            allEmbeddings.Add(embeddings[j]);
+                            continue;
+                        }
+
+                        // Attempt per-item retries
+                        float[]? emb = null;
+                        for (var attempt = 1; attempt <= 2; attempt++)
+                        {
+                            try
+                            {
+                                emb = await _embeddingService.CreateEmbeddingAsync(batch[j], cancellationToken);
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Per-item embedding attempt {Attempt} failed for batch item {Index}", attempt, j);
+                                await Task.Delay(200, cancellationToken);
+                            }
+                        }
+
+                        if (emb == null)
+                        {
+                            _logger.LogError("Failed to generate embedding for one item after retries. Inserting zero-vector to preserve ordering.");
+                            emb = new float[_embeddingService.Dimension];
+                        }
+
+                        allEmbeddings.Add(emb);
+                    }
+                }
+                else
+                {
+                    allEmbeddings.AddRange(embeddings);
+                }
+
+                _logger.LogDebug("Generated embeddings {Start}-{End}/{Total}",
+                    i + 1, Math.Min(i + EmbeddingBatchSize, contents.Count), contents.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Batch embedding failed for items {Start}-{End}. Falling back to per-item generation.", i + 1, Math.Min(i + EmbeddingBatchSize, contents.Count));
+
+                foreach (var text in batch)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    float[]? emb = null;
+                    for (var attempt = 1; attempt <= 2; attempt++)
+                    {
+                        try
+                        {
+                            emb = await _embeddingService.CreateEmbeddingAsync(text, cancellationToken);
+                            break;
+                        }
+                        catch (Exception ex2)
+                        {
+                            _logger.LogWarning(ex2, "Per-item embedding attempt {Attempt} failed", attempt);
+                            await Task.Delay(200, cancellationToken);
+                        }
+                    }
+
+                    if (emb == null)
+                    {
+                        _logger.LogError("Failed to generate embedding for one item after retries. Inserting zero-vector to preserve ordering.");
+                        emb = new float[_embeddingService.Dimension];
+                    }
+
+                    allEmbeddings.Add(emb);
+                }
+            }
         }
 
         return allEmbeddings;
     }
 
     // Source file extensions to process
-    private static readonly HashSet<string> SourceExtensions =
-    [
+    private static readonly HashSet<string> SourceExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
         ".cs", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".go", ".rs", ".cpp", ".c", ".h",
         ".hpp", ".rb", ".php", ".swift", ".kt", ".scala", ".vue", ".svelte", ".razor", ".cshtml"
-    ];
+    };
 
     // Directories to exclude
-    private static readonly HashSet<string> ExcludedDirectories =
-    [
+    private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
         "node_modules", "bin", "obj", ".git", ".vs", ".idea", ".vscode",
         "packages", "dist", "build", "__pycache__", ".venv", "venv",
         "coverage", ".nyc_output", "TestResults", ".nuget"
-    ];
+    };
 
     /// <inheritdoc/>
     public async Task<IndexingResult> IndexProjectStreamingAsync(
@@ -565,7 +736,9 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                             chunkHash: chunk.ChunkHash,
                             semanticType: chunk.SemanticType,
                             semanticName: chunk.SemanticName,
-                            content: null); // Don't store content in DB
+                            content: null, // Don't store content in DB
+                            chunkIndex: chunk.ChunkIndex,
+                            totalChunks: chunk.TotalChunks);
 
                         // Don't store embedding JSON - vector store has it
                         // dbChunk.SetEmbedding(embedding, _embeddingService.ModelName);
@@ -582,6 +755,8 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                             SemanticName = chunk.SemanticName,
                             TokenCount = chunk.TokenCount,
                             Content = chunk.Content // Vector store needs content for retrieval
+                            ,ChunkIndex = chunk.ChunkIndex
+                            ,TotalChunks = chunk.TotalChunks
                         };
 
                         vectorBatch.Add((chunk.ChunkHash, embedding, metadata));
@@ -608,10 +783,25 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                         continue;
                     }
 
-                    // Index in vector store
+                    // Index in vector store with verification
                     _watchdog.UpdatePhase(projectId, $"Batch {batchNumber}/{totalBatches}: Vector indexing");
                     _logger.LogDebug("Batch {BatchNumber}: Indexing vectors...", batchNumber);
+                    var beforeCountStream = await _vectorStore.CountAsync(projectId, linkedCt);
                     await _vectorStore.IndexVectorsAsync(vectorBatch, linkedCt);
+                    var afterCountStream = await _vectorStore.CountAsync(projectId, linkedCt);
+
+                    if (afterCountStream - beforeCountStream < dbChunks.Count)
+                    {
+                        _logger.LogWarning("Streaming indexed vectors increased by {Delta} but expected {Expected}. Retrying once.",
+                            afterCountStream - beforeCountStream, dbChunks.Count);
+                        await _vectorStore.IndexVectorsAsync(vectorBatch, linkedCt);
+                        var afterRetryStream = await _vectorStore.CountAsync(projectId, linkedCt);
+                        if (afterRetryStream - beforeCountStream < dbChunks.Count)
+                        {
+                            _logger.LogError("Streaming vector indexing retry did not increase count as expected (before: {Before}, afterRetry: {AfterRetry}).",
+                                beforeCountStream, afterRetryStream);
+                        }
+                    }
                     _watchdog.Heartbeat(projectId);
 
                     totalChunksCreated += dbChunks.Count;
@@ -676,12 +866,18 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
             var relativePath = Path.GetRelativePath(workingDirectory, file);
             var extension = Path.GetExtension(file).ToLowerInvariant();
 
+            _logger.LogDebug("Discovered file: {File} (ext: {Ext})", relativePath, extension);
+
             // Skip non-source files
             if (!SourceExtensions.Contains(extension))
+            {
+                _logger.LogTrace("Skipping file due to unsupported extension: {File}", relativePath);
                 continue;
+            }
 
             // Skip excluded directories
             var shouldSkip = false;
+            string skipReason = string.Empty;
             foreach (var dir in ExcludedDirectories)
             {
                 if (relativePath.Contains($"{Path.DirectorySeparatorChar}{dir}{Path.DirectorySeparatorChar}") ||
@@ -690,14 +886,19 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                     relativePath.StartsWith($"{dir}{Path.AltDirectorySeparatorChar}"))
                 {
                     shouldSkip = true;
+                    skipReason = $"excluded directory: {dir}";
                     break;
                 }
             }
 
-            if (!shouldSkip)
+            if (shouldSkip)
             {
-                yield return (file, relativePath);
+                _logger.LogTrace("Skipping file {File}: {Reason}", relativePath, skipReason);
+                continue;
             }
+
+            _logger.LogDebug("Accepting file for processing: {File}", relativePath);
+            yield return (file, relativePath);
         }
     }
 
@@ -819,7 +1020,9 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                             chunkHash: chunk.ChunkHash,
                             semanticType: chunk.SemanticType,
                             semanticName: chunk.SemanticName,
-                            content: _chunkerOptions.StoreChunkText ? chunk.Content : null);
+                            content: _chunkerOptions.StoreChunkText ? chunk.Content : null,
+                            chunkIndex: chunk.ChunkIndex,
+                            totalChunks: chunk.TotalChunks);
 
                         dbChunk.SetEmbedding(embedding, _embeddingService.ModelName);
                         dbChunks.Add(dbChunk);
@@ -835,6 +1038,8 @@ public class RetrievalOrchestrator : IRetrievalOrchestrator
                             SemanticName = chunk.SemanticName,
                             TokenCount = chunk.TokenCount,
                             Content = chunk.Content
+                            ,ChunkIndex = chunk.ChunkIndex
+                            ,TotalChunks = chunk.TotalChunks
                         };
 
                         vectorBatch.Add((chunk.ChunkHash, embedding, metadata));

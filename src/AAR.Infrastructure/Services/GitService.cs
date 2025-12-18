@@ -15,7 +15,7 @@ namespace AAR.Infrastructure.Services;
 public class GitService : IGitService
 {
     private readonly ILogger<GitService> _logger;
-    private static readonly string[] AllowedHosts = ["github.com", "gitlab.com", "bitbucket.org", "dev.azure.com"];
+    private static readonly string[] AllowedHosts = new[] { "github.com", "gitlab.com", "bitbucket.org", "dev.azure.com" };
 
     public GitService(ILogger<GitService> logger)
     {

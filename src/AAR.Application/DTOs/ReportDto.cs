@@ -16,10 +16,10 @@ public record ReportDto
     public Guid ProjectId { get; init; }
     public string ProjectName { get; init; } = string.Empty;
     public string Summary { get; init; } = string.Empty;
-    public IList<string> Recommendations { get; init; } = [];
+    public IList<string> Recommendations { get; init; } = new List<string>();
     public int HealthScore { get; init; }
     public StatisticsDto Statistics { get; init; } = new();
-    public IList<FindingDto> Findings { get; init; } = [];
+    public IList<FindingDto> Findings { get; init; } = new List<FindingDto>();
     public string ReportVersion { get; init; } = string.Empty;
     public int AnalysisDurationSeconds { get; init; }
     public DateTime GeneratedAt { get; init; }
@@ -79,9 +79,9 @@ public record LineRangeDto
 /// </summary>
 public record AgentAnalysisResponse
 {
-    public List<AgentFinding> Findings { get; init; } = [];
+    public List<AgentFinding> Findings { get; init; } = new List<AgentFinding>();
     public string Summary { get; init; } = string.Empty;
-    public List<string> Recommendations { get; init; } = [];
+    public List<string> Recommendations { get; init; } = new List<string>();
 }
 
 /// <summary>

@@ -55,7 +55,7 @@ public class FileRecord : BaseEntity
     /// <summary>
     /// Findings related to this file
     /// </summary>
-    public ICollection<ReviewFinding> Findings { get; private set; } = [];
+    public ICollection<ReviewFinding> Findings { get; private set; } = new List<ReviewFinding>();
 
     // Private constructor for EF Core
     private FileRecord() { }

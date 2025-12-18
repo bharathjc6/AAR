@@ -438,6 +438,11 @@ Output JSON array (empty if no issues):
             if (jsonStart < 0 || jsonEnd <= jsonStart) return findings;
 
             var json = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
+            
+            // Sanitize JSON by removing comments that Ollama might include
+            json = System.Text.RegularExpressions.Regex.Replace(json, @"//.*?[\r\n]", "\r\n");
+            json = System.Text.RegularExpressions.Regex.Replace(json, @"/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+            
             var parsed = JsonSerializer.Deserialize<List<ClusterAiFinding>>(json, AiFindingModels.JsonOptions);
 
             if (parsed == null) return findings;
@@ -531,6 +536,9 @@ Only output the JSON array. If no issues, output [].";
             if (jsonStart >= 0 && jsonEnd > jsonStart)
             {
                 var json = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
+                // Sanitize JSON by removing comments
+                json = System.Text.RegularExpressions.Regex.Replace(json, @"//.*?[\r\n]", "\r\n");
+                json = System.Text.RegularExpressions.Regex.Replace(json, @"/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline);
                 
                 try
                 {
