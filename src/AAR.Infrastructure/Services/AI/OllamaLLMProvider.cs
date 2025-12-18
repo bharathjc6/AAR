@@ -138,6 +138,29 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
                     {
                         var body = string.Empty;
                         try { body = await httpResponse.Content.ReadAsStringAsync(ct); } catch { }
+
+                        // Detect when the model cannot be loaded due to insufficient host memory.
+                        // Return a sentinel OllamaResponse so the resilience pipeline treats the call as
+                        // successful (avoiding tripping the circuit), and handle the logical error
+                        // after the pipeline completes.
+                        if (!string.IsNullOrEmpty(body) &&
+                            body.IndexOf("requires more system memory", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            _logger.LogWarning(
+                                "Ollama model cannot be loaded due to insufficient memory: {Body}",
+                                body);
+
+                            return new OllamaResponse
+                            {
+                                Model = _options.LLMModel,
+                                Message = new OllamaMessage { Role = "system", Content = string.Empty },
+                                Done = true,
+                                DoneReason = "model_unavailable",
+                                PromptEvalCount = 0,
+                                EvalCount = 0
+                            };
+                        }
+
                         var code = (int)httpResponse.StatusCode;
                         throw new HttpRequestException($"Ollama returned {code} {httpResponse.ReasonPhrase}: {body}");
                     }
@@ -146,6 +169,19 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
                     return parsed ?? throw new InvalidOperationException("Empty response from Ollama");
                 },
                 cancellationToken);
+
+            // If we returned a sentinel response because the model could not be loaded,
+            // map it to a failure result without throwing to avoid tripping the resilience
+            // circuit for a non-transient configuration issue.
+            if (response.DoneReason != null && response.DoneReason.Equals("model_unavailable", StringComparison.OrdinalIgnoreCase))
+            {
+                stopwatch.Stop();
+                _logger.LogWarning("LLM model unavailable on Ollama host (insufficient memory)");
+                return Result<LLMResponse>.Failure(new Error(
+                    "LLM.ModelTooLarge",
+                    "The configured model requires more memory than is available on the Ollama host. " +
+                    "Use a smaller model or increase host memory."));
+            }
 
             stopwatch.Stop();
 
@@ -274,7 +310,23 @@ public class OllamaLLMProvider : ILLMProvider, IDisposable
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
 
-            httpResponse.EnsureSuccessStatusCode();
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                var body = string.Empty;
+                try { body = await httpResponse.Content.ReadAsStringAsync(cancellationToken); } catch { }
+
+                if (!string.IsNullOrEmpty(body) &&
+                    body.IndexOf("requires more system memory", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    _logger.LogWarning("Ollama streaming model cannot be loaded due to insufficient memory: {Body}", body);
+                    return Result<LLMResponse>.Failure(new Error(
+                        "LLM.ModelTooLarge",
+                        "The configured model requires more memory than is available on the Ollama host. " +
+                        "Use a smaller model or increase host memory."));
+                }
+
+                httpResponse.EnsureSuccessStatusCode();
+            }
 
             await using var stream = await httpResponse.Content.ReadAsStreamAsync(cancellationToken);
             using var reader = new StreamReader(stream);
