@@ -90,7 +90,7 @@ jobs:
           VITE_API_URL: ${{ vars.API_URL }}
       
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: frontend-dist
           path: aar-frontend/dist
@@ -162,7 +162,7 @@ jobs:
       
       - name: Upload Cypress screenshots
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cypress-screenshots
           path: aar-frontend/cypress/screenshots

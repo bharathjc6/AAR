@@ -44,7 +44,7 @@ jobs:
         run: dotnet publish src/AAR.Api/AAR.Api.csproj --configuration Release --output ./publish/api --no-build
         
       - name: Upload API artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: api-build
           path: ./publish/api
@@ -79,7 +79,7 @@ jobs:
           VITE_API_BASE_URL: http://localhost:5000
           
       - name: Upload frontend build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: frontend-build
           path: aar-frontend/dist
@@ -194,7 +194,7 @@ jobs:
           CI: true
           
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: playwright-report
@@ -202,7 +202,7 @@ jobs:
           retention-days: 7
           
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: e2e-test-results
@@ -244,7 +244,7 @@ jobs:
           docker compose -f docker-compose.e2e.yml logs > docker-logs.txt
           
       - name: Upload Docker logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: docker-e2e-logs

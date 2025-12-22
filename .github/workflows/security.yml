@@ -87,7 +87,7 @@ jobs:
           fi
 
       - name: Upload vulnerability report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: vulnerability-report
@@ -154,7 +154,7 @@ jobs:
           fi
 
       - name: Upload build output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: sast-report
@@ -214,7 +214,7 @@ jobs:
           dotnet-project-licenses --input . --output licenses.json --json || true
 
       - name: Upload license report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: license-report
@@ -243,7 +243,7 @@ jobs:
         run: dotnet test --filter "FullyQualifiedName~Security" --logger "trx;LogFileName=security-tests.trx"
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: security-test-results
